@@ -8,7 +8,7 @@ import path from 'path';
 const DEFAULT_OPENCLAW_VERSION = '2026.2.23';
 const DEFAULT_GATEWAY_PORT = 18789;
 const GATEWAY_PORT_SCAN_LIMIT = 80;
-const GATEWAY_BOOT_TIMEOUT_MS = 120 * 1000;
+const GATEWAY_BOOT_TIMEOUT_MS = 180 * 1000;
 const GATEWAY_RESTART_DELAY_MS = 3000;
 
 export type OpenClawEnginePhase =
@@ -551,13 +551,17 @@ export class OpenClawEngineManager extends EventEmitter {
       `// because the drive letter (e.g. "D:") is misinterpreted as a URL scheme.\n` +
       `const { pathToFileURL } = require('node:url');\n` +
       `const path = require('node:path');\n` +
+      `const fs = require('node:fs');\n` +
       `const esmEntry = path.join(__dirname, '${esmBasename}');\n` +
       `// Patch argv so openclaw's isMainModule() recognizes this as the main entry.\n` +
       `// In standard Node.js: process.argv = [execPath, scriptPath, ...args]\n` +
       `// In Electron utilityProcess: process.argv = [execPath, ...args] (no scriptPath)\n` +
       `// We must detect which layout we have to avoid overwriting the 'gateway' command arg.\n` +
+      `// Use fs.realpathSync to resolve symlinks/junctions so that e.g.\n` +
+      `// "...current/gateway-launcher.cjs" (junction) matches "...win-x64/gateway-launcher.cjs".\n` +
+      `const _realpath = (p) => { try { return fs.realpathSync(path.resolve(p)); } catch { return path.resolve(p); } };\n` +
       `const _launcherInArgv = process.argv[1] &&\n` +
-      `  path.resolve(process.argv[1]).toLowerCase() === path.resolve(__filename).toLowerCase();\n` +
+      `  _realpath(process.argv[1]).toLowerCase() === _realpath(__filename).toLowerCase();\n` +
       `if (_launcherInArgv) {\n` +
       `  process.argv[1] = esmEntry;\n` +
       `} else {\n` +

@@ -911,8 +911,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private async loadGatewayClientCtor(clientEntryPath: string): Promise<GatewayClientCtor> {
-    const modulePath = pathToFileURL(clientEntryPath).href;
-    const loaded = await import(modulePath) as Record<string, unknown>;
+    // Use require() with file path directly. TypeScript's CJS output downgrades
+    // dynamic import() to require(), which doesn't support file:// URLs.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const loaded = require(clientEntryPath) as Record<string, unknown>;
     const direct = loaded.GatewayClient;
     if (typeof direct === 'function') {
       return direct as GatewayClientCtor;

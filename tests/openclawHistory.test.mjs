@@ -63,9 +63,22 @@ Handle this reminder internally. Do not relay it to the user unless explicitly r
 Current time: Sunday, March 15th, 2026 — 11:27 (Asia/Shanghai)`,
   });
 
-  assert.equal(entry?.role, 'system');
-  assert.match(entry?.text ?? '', /^System: \[Sunday, March 15th, 2026 — 11:27 \(Asia\/Shanghai\)\] ⏰ 提醒：该去买菜了！/);
-  assert.match(entry?.text ?? '', /Please relay this reminder to the user in a helpful and friendly way\./);
+  assert.deepEqual(entry, {
+    role: 'system',
+    text: '⏰ 提醒：该去买菜了！',
+  });
+});
+
+test('extractGatewayHistoryEntry remaps plain scheduled reminder text to a system message', () => {
+  const entry = extractGatewayHistoryEntry({
+    role: 'user',
+    content: '⏰ 提醒：该去钉钉打卡啦！别忘了打卡哦～',
+  });
+
+  assert.deepEqual(entry, {
+    role: 'system',
+    text: '⏰ 提醒：该去钉钉打卡啦！别忘了打卡哦～',
+  });
 });
 
 test('buildScheduledReminderSystemMessage returns null for regular user text', () => {

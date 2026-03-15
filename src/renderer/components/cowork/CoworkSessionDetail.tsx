@@ -24,6 +24,7 @@ import PencilSquareIcon from '../icons/PencilSquareIcon';
 import TrashIcon from '../icons/TrashIcon';
 import WindowTitleBar from '../window/WindowTitleBar';
 import { getCompactFolderName } from '../../utils/path';
+import { getScheduledReminderDisplayText } from '../../../common/scheduledReminderText';
 
 interface CoworkSessionDetailProps {
   onManageSkills?: () => void;
@@ -1136,7 +1137,8 @@ export const AssistantTurnBlock: React.FC<{
     const rawContent = hasText(message.content)
       ? message.content
       : (typeof message.metadata?.error === 'string' ? message.metadata.error : '');
-    const content = mapDisplayText ? mapDisplayText(rawContent) : rawContent;
+    const normalizedContent = getScheduledReminderDisplayText(rawContent) ?? rawContent;
+    const content = mapDisplayText ? mapDisplayText(normalizedContent) : normalizedContent;
     if (!content.trim()) return null;
 
     return (

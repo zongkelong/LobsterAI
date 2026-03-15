@@ -1125,7 +1125,25 @@ const getIMGatewayManager = () => {
             await openClawRuntimeAdapter.connectGatewayIfNeeded();
           }
         },
-        createScheduledTask: async ({ sessionId, request }) => {
+        getOpenClawGatewayClient: () => openClawRuntimeAdapter?.getGatewayClient() ?? null,
+        ensureOpenClawGatewayReady: async () => {
+          if (!openClawRuntimeAdapter) {
+            throw new Error('OpenClaw runtime adapter not initialized.');
+          }
+          await openClawRuntimeAdapter.ensureReady();
+          await openClawRuntimeAdapter.connectGatewayIfNeeded();
+        },
+        getOpenClawSessionKeysForCoworkSession: (sessionId: string) => {
+          return openClawRuntimeAdapter?.getSessionKeysForSession(sessionId) ?? [];
+        },
+        createScheduledTask: async ({ sessionId, message, request }) => {
+          if (message.platform === 'dingtalk') {
+            await getIMGatewayManager().primeConversationReplyRoute(
+              message.platform,
+              message.conversationId,
+              sessionId,
+            );
+          }
           const task = await getCronJobService().addJob({
             name: request.taskName,
             description: '',

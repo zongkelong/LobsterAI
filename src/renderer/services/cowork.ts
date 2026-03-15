@@ -35,6 +35,7 @@ class CoworkService {
   private openClawStatus: OpenClawEngineStatus | null = null;
   private openClawStatusListeners = new Set<(status: OpenClawEngineStatus) => void>();
   private openClawEngineListenerAttached = false;
+  private latestLoadSessionsRequestId = 0;
   private latestLoadSessionRequestId = 0;
 
   async init(): Promise<void> {
@@ -165,8 +166,14 @@ class CoworkService {
   }
 
   async loadSessions(): Promise<void> {
+    const requestId = ++this.latestLoadSessionsRequestId;
     const result = await window.electron?.cowork?.listSessions();
     if (result?.success && result.sessions) {
+      // High-frequency IM traffic can trigger overlapping list refreshes.
+      // Ignore stale responses so an older snapshot does not hide newer sessions.
+      if (requestId !== this.latestLoadSessionsRequestId) {
+        return;
+      }
       store.dispatch(setSessions(result.sessions));
     }
   }

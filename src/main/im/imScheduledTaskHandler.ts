@@ -1,6 +1,11 @@
 import type { IMMediaAttachment, IMMessage } from './types';
 import { IMChatHandler } from './imChatHandler';
 import { buildOpenClawLocalTimeContextPrompt } from '../libs/openclawLocalTimeContextPrompt';
+import {
+  parseSimpleScheduledReminderText,
+  parseLegacyScheduledReminderSystemMessage,
+  parseScheduledReminderPrompt,
+} from '../../common/scheduledReminderText';
 
 function pad(value: number): string {
   return String(value).padStart(2, '0');
@@ -269,9 +274,12 @@ export function createIMScheduledTaskRequestDetector(options: {
 
 export function isReminderSystemTurn(messages: Array<{ type: string; content: string }>): boolean {
   return messages.some((message) => {
+    const content = typeof message.content === 'string' ? message.content : '';
     if (message.type === 'system') {
-      return true;
+      return parseSimpleScheduledReminderText(content) !== null
+        || parseLegacyScheduledReminderSystemMessage(content) !== null;
     }
-    return /A scheduled reminder has been triggered\.|^System:\s*\[/u.test(message.content);
+    return parseScheduledReminderPrompt(content) !== null
+      || parseSimpleScheduledReminderText(content) !== null;
   });
 }

@@ -33,6 +33,7 @@ const BRIDGE_MAX_MESSAGES = 20;
 const BRIDGE_MAX_MESSAGE_CHARS = 1200;
 const GATEWAY_READY_TIMEOUT_MS = 15_000;
 const FINAL_HISTORY_SYNC_LIMIT = 50;
+const CHANNEL_SESSION_DISCOVERY_LIMIT = 200;
 
 type GatewayEventFrame = {
   event: string;
@@ -134,8 +135,20 @@ type PendingApprovalEntry = {
   sessionId: string;
 };
 
+type ChannelHistorySyncEntry = {
+  role: 'user' | 'assistant';
+  text: string;
+};
+
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+};
+
+const isSameChannelHistoryEntry = (
+  left: ChannelHistorySyncEntry,
+  right: ChannelHistorySyncEntry,
+): boolean => {
+  return left.role === right.role && left.text === right.text;
 };
 
 const truncate = (value: string, maxChars: number): string => {
@@ -662,7 +675,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return;
     }
     try {
-      const params = { activeMinutes: 60, limit: 50 };
+      const params = { activeMinutes: 60, limit: CHANNEL_SESSION_DISCOVERY_LIMIT };
       console.log('[ChannelSync] pollChannelSessions: calling sessions.list with', JSON.stringify(params));
       const result = await this.gatewayClient.request('sessions.list', params);
       const sessions = (result as Record<string, unknown>)?.sessions;
@@ -2203,6 +2216,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
+  /**
+   * Channel history prefetch/full-sync intentionally skips historical system entries.
+   * Seed the raw gateway history cursor so those older reminders are not replayed
+   * under the next assistant reply during final-history sync.
+   */
+  private markGatewayHistoryWindowConsumed(sessionId: string, historyMessages: unknown[]): void {
+    if (historyMessages.length === 0) {
+      return;
+    }
+    this.gatewayHistoryCountBySession.set(sessionId, historyMessages.length);
+  }
+
   private async syncFinalAssistantWithHistory(sessionId: string, turn: ActiveTurn): Promise<void> {
     console.log('[Debug:syncFinal] start — sessionId:', sessionId, 'sessionKey:', turn.sessionKey);
     const client = this.gatewayClient;
@@ -2355,25 +2380,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
   }
 
-  /**
-   * Sync user messages from gateway chat.history that haven't been added to the local store yet.
-   * Used for channel-originated sessions (e.g. Telegram) where user messages arrive via the
-   * gateway rather than the LobsterAI UI.
-   *
-   * Called at the start of a new turn (via prefetchChannelUserMessages) so that user messages
-   * appear before the assistant's streaming response. Both chat and agent events are buffered
-   * during prefetch, so the replay order matches direct cowork sessions.
-   *
-   * Uses position-based matching: compares history entries with local messages sequentially
-   * to avoid false dedup of identical-content messages (e.g. two "ok" messages in a row).
-   */
-  private syncChannelUserMessages(sessionId: string, historyMessages: unknown[], latestOnly = false, isDiscord = false, isQQ = false): void {
-    console.log('[Debug:syncChannelUserMessages] sessionId:', sessionId, 'historyMessages:', historyMessages.length, 'latestOnly:', latestOnly, 'isQQ:', isQQ);
-    const session = this.store.getSession(sessionId);
-
-    // Collect user + assistant messages from history in chronological order
-    type MsgEntry = { role: 'user' | 'assistant'; text: string };
-    const historyEntries: MsgEntry[] = [];
+  private collectChannelHistoryEntries(
+    historyMessages: unknown[],
+    isDiscord: boolean,
+    isQQ: boolean,
+  ): ChannelHistorySyncEntry[] {
+    const historyEntries: ChannelHistorySyncEntry[] = [];
     for (const message of historyMessages) {
       if (!isRecord(message)) continue;
       const role = typeof message.role === 'string' ? message.role.trim().toLowerCase() : '';
@@ -2385,6 +2397,127 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         historyEntries.push({ role: role as 'user' | 'assistant', text });
       }
     }
+    return historyEntries;
+  }
+
+  private collectLocalChannelEntries(sessionId: string): ChannelHistorySyncEntry[] {
+    const session = this.store.getSession(sessionId);
+    if (!session) return [];
+
+    const localEntries: ChannelHistorySyncEntry[] = [];
+    for (const msg of session.messages) {
+      if (msg.type !== 'user' && msg.type !== 'assistant') continue;
+      const text = msg.content.trim();
+      if (!text) continue;
+      localEntries.push({ role: msg.type, text });
+    }
+    return localEntries;
+  }
+
+  private computeChannelHistoryFirstNewIndex(
+    localEntries: ChannelHistorySyncEntry[],
+    historyEntries: ChannelHistorySyncEntry[],
+    cursor: number,
+  ): { firstNewIdx: number; strategy: string } {
+    if (localEntries.length === 0) {
+      return { firstNewIdx: 0, strategy: 'empty-local' };
+    }
+
+    // `chat.history` is byte-bounded in OpenClaw, so the returned window can slide
+    // long before it reaches our requested count. Match the local tail against the
+    // current history prefix to find the continuation point without trusting length.
+    const maxOverlap = Math.min(localEntries.length, historyEntries.length);
+    for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+      let matched = true;
+      for (let idx = 0; idx < overlap; idx += 1) {
+        const localEntry = localEntries[localEntries.length - overlap + idx];
+        const historyEntry = historyEntries[idx];
+        if (!isSameChannelHistoryEntry(localEntry, historyEntry)) {
+          matched = false;
+          break;
+        }
+      }
+      if (matched) {
+        return { firstNewIdx: overlap, strategy: 'tail-overlap' };
+      }
+    }
+
+    let lastLocalUserIdx = -1;
+    for (let idx = localEntries.length - 1; idx >= 0; idx -= 1) {
+      if (localEntries[idx].role === 'user') {
+        lastLocalUserIdx = idx;
+        break;
+      }
+    }
+
+    if (lastLocalUserIdx >= 0) {
+      const lastLocalUser = localEntries[lastLocalUserIdx];
+      let prevLocalUserText: string | undefined;
+      for (let idx = lastLocalUserIdx - 1; idx >= 0; idx -= 1) {
+        if (localEntries[idx].role === 'user') {
+          prevLocalUserText = localEntries[idx].text;
+          break;
+        }
+      }
+
+      for (let idx = historyEntries.length - 1; idx >= 0; idx -= 1) {
+        if (historyEntries[idx].role !== 'user' || historyEntries[idx].text !== lastLocalUser.text) {
+          continue;
+        }
+        if (prevLocalUserText !== undefined && idx > 0) {
+          let prevHistUserText: string | undefined;
+          for (let histIdx = idx - 1; histIdx >= 0; histIdx -= 1) {
+            if (historyEntries[histIdx].role === 'user') {
+              prevHistUserText = historyEntries[histIdx].text;
+              break;
+            }
+          }
+          if (prevHistUserText !== prevLocalUserText) {
+            continue;
+          }
+        }
+        return { firstNewIdx: idx + 1, strategy: 'last-user-anchor' };
+      }
+    }
+
+    let localIdx = 0;
+    let forwardFirstNewIdx = 0;
+    for (let idx = 0; idx < historyEntries.length; idx += 1) {
+      if (localIdx < localEntries.length && isSameChannelHistoryEntry(historyEntries[idx], localEntries[localIdx])) {
+        localIdx += 1;
+        forwardFirstNewIdx = idx + 1;
+      }
+    }
+    if (forwardFirstNewIdx > 0) {
+      return { firstNewIdx: forwardFirstNewIdx, strategy: 'forward-match' };
+    }
+
+    if (historyEntries.length < cursor) {
+      return { firstNewIdx: 0, strategy: 'history-rewrite' };
+    }
+
+    return {
+      firstNewIdx: Math.min(cursor, historyEntries.length),
+      strategy: 'cursor-fallback',
+    };
+  }
+
+  /**
+   * Sync user messages from gateway chat.history that haven't been added to the local store yet.
+   * Used for channel-originated sessions (e.g. Telegram) where user messages arrive via the
+   * gateway rather than the LobsterAI UI.
+   *
+   * Called at the start of a new turn (via prefetchChannelUserMessages) so that user messages
+   * appear before the assistant's streaming response. Both chat and agent events are buffered
+   * during prefetch, so the replay order matches direct cowork sessions.
+   *
+   * Reconciles against the local tail instead of trusting history length/cursor alone,
+   * because OpenClaw's `chat.history` window can slide due to byte limits well before
+   * the requested message count is reached.
+   */
+  private syncChannelUserMessages(sessionId: string, historyMessages: unknown[], latestOnly = false, isDiscord = false, isQQ = false): void {
+    console.log('[Debug:syncChannelUserMessages] sessionId:', sessionId, 'historyMessages:', historyMessages.length, 'latestOnly:', latestOnly, 'isQQ:', isQQ);
+    const historyEntries = this.collectChannelHistoryEntries(historyMessages, isDiscord, isQQ);
 
     const cursor = this.channelSyncCursor.get(sessionId) ?? 0;
     console.log('[Debug:syncChannelUserMessages] cursor:', cursor, 'history entries:', historyEntries.length);
@@ -2394,7 +2527,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     // Advance cursor to end so subsequent syncs don't replay old history.
     if (latestOnly) {
       if (historyEntries.length > 0) {
-        const lastUser = [...historyEntries].reverse().find(e => e.role === 'user');
+        const lastUser = [...historyEntries].reverse().find((entry) => entry.role === 'user');
         if (lastUser) {
           const userMessage = this.store.addMessage(sessionId, {
             type: 'user',
@@ -2409,124 +2542,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       return;
     }
 
-    // Determine firstNewIdx: where in historyEntries new (unsynced) messages start.
-    // Use RAW message count (historyMessages.length) to detect sliding window, NOT the
-    // filtered historyEntries count or cursor. When the gateway returns FINAL_HISTORY_SYNC_LIMIT
-    // raw messages, the window is at capacity and sliding — even if filtered entries are fewer
-    // due to toolCall/toolResult entries being stripped (e.g. raw=50, filtered=48, cursor=48).
-    let firstNewIdx: number;
-    if (historyMessages.length >= FINAL_HISTORY_SYNC_LIMIT) {
-      // Sliding window: gateway returned a full window, position-based cursor is unreliable.
-      // Find the continuation point by matching the last local message in history.
-      console.log('[Debug:syncChannelUserMessages] history at capacity (raw:', historyMessages.length, ', filtered:', historyEntries.length, ', cursor:', cursor, '), using content matching');
-      const localEntries: MsgEntry[] = [];
-      if (session) {
-        for (const msg of session.messages) {
-          if (msg.type === 'user' || msg.type === 'assistant') {
-            localEntries.push({ role: msg.type, text: msg.content.trim() });
-          }
-        }
-      }
-
-      if (localEntries.length > 0) {
-        const lastLocal = localEntries[localEntries.length - 1];
-        let matchPos = -1;
-        for (let i = historyEntries.length - 1; i >= 0; i--) {
-          if (historyEntries[i].role === lastLocal.role
-              && historyEntries[i].text === lastLocal.text) {
-            // Double-check: verify the preceding entry also matches to avoid
-            // false positives from repeated identical messages (e.g. "再来一个").
-            if (localEntries.length >= 2 && i > 0) {
-              const secondLastLocal = localEntries[localEntries.length - 2];
-              if (historyEntries[i - 1].role === secondLastLocal.role
-                  && historyEntries[i - 1].text === secondLastLocal.text) {
-                matchPos = i;
-                break;
-              }
-              // Preceding entry didn't match — might be a duplicate, keep searching.
-              continue;
-            }
-            matchPos = i;
-            break;
-          }
-        }
-
-        // Fallback: if the last local entry is an assistant message and matching failed,
-        // the stored text may be a segment (from resolveAssistantSegmentText) that differs
-        // from the full text in gateway history. Retry with the last USER message instead,
-        // which is always stored verbatim and matches gateway history exactly.
-        if (matchPos < 0 && lastLocal.role === 'assistant') {
-          let lastLocalUserIdx = -1;
-          for (let j = localEntries.length - 1; j >= 0; j--) {
-            if (localEntries[j].role === 'user') {
-              lastLocalUserIdx = j;
-              break;
-            }
-          }
-          if (lastLocalUserIdx >= 0) {
-            const lastLocalUser = localEntries[lastLocalUserIdx];
-            // Find preceding user message in local for double-verification
-            let prevLocalUserText: string | undefined;
-            for (let j = lastLocalUserIdx - 1; j >= 0; j--) {
-              if (localEntries[j].role === 'user') {
-                prevLocalUserText = localEntries[j].text;
-                break;
-              }
-            }
-            console.log('[Debug:syncChannelUserMessages] assistant match failed, retrying with last user entry');
-            for (let i = historyEntries.length - 1; i >= 0; i--) {
-              if (historyEntries[i].role === 'user'
-                  && historyEntries[i].text === lastLocalUser.text) {
-                // Double-check: verify the preceding user message also matches
-                if (prevLocalUserText !== undefined && i > 0) {
-                  let prevHistUserText: string | undefined;
-                  for (let k = i - 1; k >= 0; k--) {
-                    if (historyEntries[k].role === 'user') {
-                      prevHistUserText = historyEntries[k].text;
-                      break;
-                    }
-                  }
-                  if (prevHistUserText !== prevLocalUserText) {
-                    continue; // Double-check failed, keep searching
-                  }
-                }
-                matchPos = i;
-                break;
-              }
-            }
-          }
-        }
-
-        firstNewIdx = matchPos >= 0 ? matchPos + 1 : historyEntries.length;
-        console.log('[Debug:syncChannelUserMessages] content match result: matchPos:', matchPos, 'firstNewIdx:', firstNewIdx);
-      } else {
-        firstNewIdx = 0; // No local messages, sync everything
-      }
-    } else if (historyEntries.length < cursor) {
-      // Safety: gateway returned fewer entries than cursor (session truncated/rebuilt).
-      // Only reached when raw history < FINAL_HISTORY_SYNC_LIMIT (not a sliding window).
-      console.warn('[Debug:syncChannelUserMessages] history shrank (cursor:', cursor, 'entries:', historyEntries.length, '), falling back to text matching');
-      const localEntries: MsgEntry[] = [];
-      if (session) {
-        for (const msg of session.messages) {
-          if (msg.type === 'user' || msg.type === 'assistant') {
-            localEntries.push({ role: msg.type, text: msg.content.trim() });
-          }
-        }
-      }
-      let localIdx = 0;
-      firstNewIdx = 0;
-      for (let i = 0; i < historyEntries.length; i++) {
-        if (localIdx < localEntries.length
-          && historyEntries[i].role === localEntries[localIdx].role
-          && historyEntries[i].text === localEntries[localIdx].text) {
-          localIdx++;
-          firstNewIdx = i + 1;
-        }
-      }
-    } else {
-      firstNewIdx = cursor;
-    }
+    const localEntries = this.collectLocalChannelEntries(sessionId);
+    const { firstNewIdx, strategy } = this.computeChannelHistoryFirstNewIndex(localEntries, historyEntries, cursor);
+    console.log(
+      '[Debug:syncChannelUserMessages] continuation strategy:',
+      strategy,
+      'firstNewIdx:',
+      firstNewIdx,
+      'local entries:',
+      localEntries.length,
+      'history entries:',
+      historyEntries.length,
+    );
 
     // Append messages from firstNewIdx onwards.
     // Only sync user messages here — assistant messages are already added by the
@@ -2578,6 +2605,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         console.log('[ChannelSync] syncFullChannelHistory: no messages in history');
         return;
       }
+      this.markGatewayHistoryWindowConsumed(sessionId, history.messages);
 
       const session = this.store.getSession(sessionId);
       // Build ordered list of existing local messages for position-based matching
@@ -2927,6 +2955,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         console.log('[Debug:prefetch] chat.history returned', msgCount, 'messages (attempt', attempt, ')');
 
         if (Array.isArray(history?.messages) && history.messages.length > 0) {
+          this.markGatewayHistoryWindowConsumed(sessionId, history.messages);
           const latestOnly = this.reCreatedChannelSessionIds.has(sessionId);
           const beforeCount = this.getUserMessageCount(sessionId);
           this.syncChannelUserMessages(sessionId, history.messages, latestOnly, sessionKey.includes(':discord:'), sessionKey.includes(':qqbot:'));
@@ -3059,6 +3088,36 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    */
   getGatewayClient(): GatewayClientLike | null {
     return this.gatewayClient;
+  }
+
+  getSessionKeysForSession(sessionId: string): string[] {
+    const normalizedSessionId = sessionId.trim();
+    if (!normalizedSessionId) {
+      return [];
+    }
+
+    const keys: string[] = [];
+    for (const [key, mappedSessionId] of this.sessionIdBySessionKey.entries()) {
+      if (mappedSessionId === normalizedSessionId) {
+        keys.push(key);
+      }
+    }
+
+    const managedKey = this.toSessionKey(normalizedSessionId);
+    if (!keys.includes(managedKey)) {
+      keys.push(managedKey);
+    }
+
+    keys.sort((left, right) => {
+      const leftManaged = isManagedSessionKey(left);
+      const rightManaged = isManagedSessionKey(right);
+      if (leftManaged !== rightManaged) {
+        return leftManaged ? 1 : -1;
+      }
+      return left.localeCompare(right);
+    });
+
+    return keys;
   }
 
   /**

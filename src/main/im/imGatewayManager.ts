@@ -18,6 +18,13 @@ import type {
   ParsedIMScheduledTaskRequest,
 } from './imScheduledTaskHandler';
 import { createIMScheduledTaskRequestDetector } from './imScheduledTaskHandler';
+import {
+  buildDingTalkSessionKeyCandidates,
+  buildDingTalkSendParamsFromRoute,
+  type OpenClawDeliveryRoute,
+  resolveManagedSessionDeliveryRoute,
+  resolveOpenClawDeliveryRouteForSessionKeys,
+} from './imDeliveryRoute';
 import { fetchJsonWithTimeout } from './http';
 import {
   IMGatewayConfig,
@@ -33,6 +40,18 @@ import type { CoworkRuntime } from '../libs/agentEngine/types';
 import type { CoworkStore } from '../coworkStore';
 const CONNECTIVITY_TIMEOUT_MS = 10_000;
 const INBOUND_ACTIVITY_WARN_AFTER_MS = 2 * 60 * 1000;
+
+type GatewayClientLike = {
+  request: <T = Record<string, unknown>>(
+    method: string,
+    params?: unknown,
+    opts?: { expectFinal?: boolean },
+  ) => Promise<T>;
+};
+
+interface OpenClawSessionsListResult {
+  sessions?: unknown[];
+}
 
 interface TelegramGetMeResponse {
   ok?: boolean;
@@ -54,6 +73,9 @@ export interface IMGatewayManagerOptions {
   isOpenClawEngine?: () => boolean;
   syncOpenClawConfig?: () => Promise<void>;
   ensureOpenClawGatewayConnected?: () => Promise<void>;
+  getOpenClawGatewayClient?: () => GatewayClientLike | null;
+  ensureOpenClawGatewayReady?: () => Promise<void>;
+  getOpenClawSessionKeysForCoworkSession?: (sessionId: string) => string[];
   createScheduledTask?: (params: {
     sessionId: string;
     message: IMMessage;
@@ -73,6 +95,9 @@ export class IMGatewayManager extends EventEmitter {
   private isOpenClawEngine: (() => boolean) | null = null;
   private syncOpenClawConfig: (() => Promise<void>) | null = null;
   private ensureOpenClawGatewayConnected: (() => Promise<void>) | null = null;
+  private getOpenClawGatewayClient: (() => GatewayClientLike | null) | null = null;
+  private ensureOpenClawGatewayReady: (() => Promise<void>) | null = null;
+  private getOpenClawSessionKeysForCoworkSession: ((sessionId: string) => string[]) | null = null;
   private createScheduledTask:
     | ((params: {
         sessionId: string;
@@ -104,6 +129,9 @@ export class IMGatewayManager extends EventEmitter {
     this.isOpenClawEngine = options?.isOpenClawEngine ?? null;
     this.syncOpenClawConfig = options?.syncOpenClawConfig ?? null;
     this.ensureOpenClawGatewayConnected = options?.ensureOpenClawGatewayConnected ?? null;
+    this.getOpenClawGatewayClient = options?.getOpenClawGatewayClient ?? null;
+    this.ensureOpenClawGatewayReady = options?.ensureOpenClawGatewayReady ?? null;
+    this.getOpenClawSessionKeysForCoworkSession = options?.getOpenClawSessionKeysForCoworkSession ?? null;
     this.createScheduledTask = options?.createScheduledTask ?? null;
 
     // Forward gateway events
@@ -1614,6 +1642,27 @@ export class IMGatewayManager extends EventEmitter {
   async sendConversationReply(platform: IMPlatform, conversationId: string, text: string): Promise<boolean> {
     try {
       switch (platform) {
+        case 'dingtalk': {
+          const target = await this.resolveDingTalkConversationReplyTarget(conversationId)
+            ?? this.parseDingTalkConversationTarget(conversationId);
+          if (!target) {
+            console.warn(`[IMGatewayManager] Cannot resolve DingTalk target from conversationId: ${conversationId}`);
+            return false;
+          }
+          await this.requestOpenClawGateway('dingtalk-connector.send', {
+            ...(target.accountId ? { accountId: target.accountId } : {}),
+            target: target.target,
+            content: text,
+            useAICard: false,
+            fallbackToNormal: true,
+          });
+          this.cacheConversationReplyRoute('dingtalk', conversationId, {
+            channel: 'dingtalk-connector',
+            to: target.target,
+            ...(target.accountId ? { accountId: target.accountId } : {}),
+          });
+          return true;
+        }
         case 'nim':
           await this.nimGateway.sendConversationNotification(conversationId, text);
           return true;
@@ -1627,6 +1676,235 @@ export class IMGatewayManager extends EventEmitter {
       console.error(`[IMGatewayManager] Failed to send conversation reply for ${platform}:${conversationId}:`, error);
       return false;
     }
+  }
+
+  async primeConversationReplyRoute(
+    platform: IMPlatform,
+    conversationId: string,
+    coworkSessionId: string,
+  ): Promise<void> {
+    if (platform !== 'dingtalk') {
+      return;
+    }
+
+    try {
+      const lookup = await this.lookupDingTalkConversationReplyRoute(conversationId, coworkSessionId);
+      const resolved = lookup?.resolved;
+      if (!resolved) {
+        return;
+      }
+
+      this.cacheConversationReplyRoute('dingtalk', conversationId, resolved.route);
+      const sendParams = buildDingTalkSendParamsFromRoute(resolved.route);
+      console.log('[IMGatewayManager] Primed DingTalk reply route', JSON.stringify({
+        conversationId,
+        coworkSessionId: lookup.coworkSessionId,
+        sessionKey: resolved.sessionKey,
+        channel: resolved.route.channel,
+        target: sendParams?.target ?? resolved.route.to,
+        accountId: sendParams?.accountId ?? resolved.route.accountId ?? null,
+      }));
+    } catch (error: any) {
+      console.warn(
+        `[IMGatewayManager] Failed to prime DingTalk reply route for ${conversationId}:`,
+        error?.message || error,
+      );
+    }
+  }
+
+  private async resolveDingTalkConversationReplyTarget(
+    conversationId: string,
+  ): Promise<{ accountId?: string; target: string } | null> {
+    let lookup: Awaited<ReturnType<IMGatewayManager['lookupDingTalkConversationReplyRoute']>> = null;
+    try {
+      lookup = await this.lookupDingTalkConversationReplyRoute(conversationId);
+    } catch (error: any) {
+      console.warn(
+        `[IMGatewayManager] Failed to query OpenClaw DingTalk reply route for ${conversationId}:`,
+        error?.message || error,
+      );
+    }
+
+    if (!lookup?.resolved) {
+      if (lookup) {
+        console.warn(
+          `[IMGatewayManager] No OpenClaw delivery route found for DingTalk session ${lookup.coworkSessionId}`,
+          JSON.stringify({
+            conversationId,
+            candidateSessionKeys: lookup.candidateSessionKeys,
+            dingtalkSessionKeys: lookup.dingtalkSessionKeys,
+          }),
+        );
+      }
+
+      const cachedRoute = this.imStore.getConversationReplyRoute('dingtalk', conversationId);
+      if (cachedRoute) {
+        const cachedSendParams = buildDingTalkSendParamsFromRoute(cachedRoute);
+        if (cachedSendParams) {
+          console.log('[IMGatewayManager] Reused cached DingTalk reply route', JSON.stringify({
+            conversationId,
+            channel: cachedRoute.channel,
+            target: cachedSendParams.target,
+            accountId: cachedSendParams.accountId ?? null,
+          }));
+          return cachedSendParams;
+        }
+      }
+
+      return null;
+    }
+
+    const { resolved } = lookup;
+    this.cacheConversationReplyRoute('dingtalk', conversationId, resolved.route);
+
+    const sendParams = buildDingTalkSendParamsFromRoute(resolved.route);
+    if (!sendParams) {
+      console.warn(
+        `[IMGatewayManager] OpenClaw route for ${resolved.sessionKey} is not a DingTalk route: ${resolved.route.channel}`,
+      );
+      return null;
+    }
+
+    console.log('[IMGatewayManager] Resolved DingTalk reply route', JSON.stringify({
+      conversationId,
+      coworkSessionId: lookup.coworkSessionId,
+      sessionKey: resolved.sessionKey,
+      channel: resolved.route.channel,
+      target: sendParams.target,
+      accountId: sendParams.accountId ?? null,
+    }));
+    return sendParams;
+  }
+
+  private async lookupDingTalkConversationReplyRoute(
+    conversationId: string,
+    coworkSessionId?: string,
+  ): Promise<{
+    coworkSessionId: string;
+    candidateSessionKeys: string[];
+    dingtalkSessionKeys: string[];
+    resolved: { sessionKey: string; route: OpenClawDeliveryRoute } | null;
+  } | null> {
+    const normalizedCoworkSessionId = coworkSessionId?.trim()
+      || this.imStore.getSessionMapping(conversationId, 'dingtalk')?.coworkSessionId
+      || '';
+    if (!normalizedCoworkSessionId) {
+      return null;
+    }
+
+    const result = await this.requestOpenClawGateway<OpenClawSessionsListResult>('sessions.list', {
+      includeGlobal: true,
+      includeUnknown: true,
+      limit: 200,
+    });
+    const sessions = Array.isArray(result?.sessions) ? result.sessions : [];
+    const candidateSessionKeys = [
+      ...(this.getOpenClawSessionKeysForCoworkSession?.(normalizedCoworkSessionId) ?? []),
+      ...buildDingTalkSessionKeyCandidates(conversationId),
+    ];
+
+    return {
+      coworkSessionId: normalizedCoworkSessionId,
+      candidateSessionKeys,
+      dingtalkSessionKeys: this.collectSessionKeysByChannel(sessions, 'dingtalk-connector'),
+      resolved: resolveOpenClawDeliveryRouteForSessionKeys(candidateSessionKeys, sessions)
+        ?? resolveManagedSessionDeliveryRoute(normalizedCoworkSessionId, sessions),
+    };
+  }
+
+  private cacheConversationReplyRoute(
+    platform: IMPlatform,
+    conversationId: string,
+    route: OpenClawDeliveryRoute,
+  ): void {
+    this.imStore.setConversationReplyRoute(platform, conversationId, route);
+  }
+
+  private collectSessionKeysByChannel(sessions: unknown[], channel: string): string[] {
+    const normalizedChannel = channel.trim().toLowerCase();
+    const matches: string[] = [];
+    for (const entry of sessions) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        continue;
+      }
+      const record = entry as Record<string, unknown>;
+      const key = typeof record.key === 'string' ? record.key.trim() : '';
+      if (!key) {
+        continue;
+      }
+      const deliveryContext = record.deliveryContext;
+      const deliveryChannel = deliveryContext && typeof deliveryContext === 'object' && !Array.isArray(deliveryContext)
+        ? (typeof (deliveryContext as Record<string, unknown>).channel === 'string'
+          ? ((deliveryContext as Record<string, unknown>).channel as string)
+          : undefined)
+        : undefined;
+      const lastChannel = typeof record.lastChannel === 'string' ? record.lastChannel : undefined;
+      const routeChannel = (deliveryChannel ?? lastChannel ?? '').trim().toLowerCase();
+      if (routeChannel !== normalizedChannel && !key.toLowerCase().includes(normalizedChannel)) {
+        continue;
+      }
+      matches.push(key);
+      if (matches.length >= 12) {
+        break;
+      }
+    }
+    return matches;
+  }
+
+  private parseDingTalkConversationTarget(
+    conversationId: string,
+  ): { accountId?: string; target: string } | null {
+    const parts = conversationId.split(':').filter(Boolean);
+    if (parts.length < 2) {
+      return null;
+    }
+
+    let accountId = parts[0]?.trim();
+    if (!accountId) {
+      return null;
+    }
+
+    // The dingtalk-connector plugin uses "__default__" as the internal account
+    // alias in conversationIds.  The send API expects the actual clientId, so
+    // resolve the alias from the persisted DingTalk config.
+    if (accountId === '__default__') {
+      const dtConfig = this.imStore.getDingTalkOpenClawConfig();
+      if (dtConfig.clientId) {
+        accountId = dtConfig.clientId;
+      }
+    }
+
+    if ((parts[1] === 'user' || parts[1] === 'group') && parts[2]) {
+      return {
+        accountId,
+        target: `${parts[1]}:${parts.slice(2).join(':')}`,
+      };
+    }
+
+    const senderId = parts[1]?.trim();
+    if (!senderId) {
+      return null;
+    }
+
+    return {
+      accountId,
+      target: `user:${senderId}`,
+    };
+  }
+
+  private async requestOpenClawGateway<T = Record<string, unknown>>(
+    method: string,
+    params?: unknown,
+  ): Promise<T> {
+    let client = this.getOpenClawGatewayClient?.() ?? null;
+    if (!client) {
+      await this.ensureOpenClawGatewayReady?.();
+      client = this.getOpenClawGatewayClient?.() ?? null;
+    }
+    if (!client) {
+      throw new Error('OpenClaw gateway client is unavailable.');
+    }
+    return client.request<T>(method, params);
   }
 
   private resolveFeishuDomain(domain: string, Lark: any): any {

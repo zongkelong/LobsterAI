@@ -106,6 +106,10 @@ class FakeIMStore {
     )) || null;
   }
 
+  getSessionMappingByCoworkSessionId(coworkSessionId) {
+    return this.mappings.find((entry) => entry.coworkSessionId === coworkSessionId) || null;
+  }
+
   createSessionMapping(imConversationId, platform, coworkSessionId) {
     const mapping = {
       imConversationId,
@@ -245,7 +249,7 @@ test('async reminder turns on IM-created sessions relay back to the original IM 
   runtime.emit('message', session.id, {
     id: 'system-1',
     type: 'system',
-    content: 'System: [Sunday, March 15th, 2026 — 4:30 PM] ⏰ 提醒：喝水',
+    content: '⏰ 提醒：喝水',
     timestamp: Date.now(),
     metadata: {},
   });
@@ -265,6 +269,54 @@ test('async reminder turns on IM-created sessions relay back to the original IM 
       platform: 'nim',
       conversationId: 'conv-1',
       text: '⏰ 该喝水啦！起身喝一杯水吧。',
+    },
+  ]);
+
+  handler.destroy();
+});
+
+test('async reminder turns on channel-synced sessions are tracked lazily and relay back', async () => {
+  const runtime = new FakeRuntime();
+  const coworkStore = new FakeCoworkStore();
+  const imStore = new FakeIMStore();
+  const relayedReplies = [];
+
+  const session = coworkStore.createSession('IM-dingtalk', process.cwd(), '', 'auto');
+  imStore.createSessionMapping('default:user-42', 'dingtalk', session.id);
+
+  const handler = new IMCoworkHandler({
+    coworkRuntime: runtime,
+    coworkStore,
+    imStore,
+    sendAsyncReply: async (platform, conversationId, text) => {
+      relayedReplies.push({ platform, conversationId, text });
+      return true;
+    },
+  });
+
+  runtime.emit('message', session.id, {
+    id: 'system-1',
+    type: 'system',
+    content: '⏰ 提醒：开会',
+    timestamp: Date.now(),
+    metadata: {},
+  });
+  runtime.emit('message', session.id, {
+    id: 'assistant-1',
+    type: 'assistant',
+    content: '时间到了，记得开会。',
+    timestamp: Date.now(),
+    metadata: {},
+  });
+  runtime.emit('complete', session.id, null);
+
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(relayedReplies, [
+    {
+      platform: 'dingtalk',
+      conversationId: 'default:user-42',
+      text: '时间到了，记得开会。',
     },
   ]);
 

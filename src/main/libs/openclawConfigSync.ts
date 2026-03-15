@@ -43,6 +43,8 @@ const MANAGED_OWNER_ALLOW_FROM = [
   'gateway-client',
 ];
 
+const MANAGED_TOOL_DENY = ['web_search'] as const;
+
 const MANAGED_SKILL_ENTRY_OVERRIDES: Record<string, { enabled: boolean }> = {
   // QQ plugin ships a legacy reminder skill that steers the model toward a
   // channel-specific cron wrapper/subagent flow. Hide that path so native IM
@@ -61,6 +63,19 @@ const MANAGED_SKILL_ENTRY_OVERRIDES: Record<string, { enabled: boolean }> = {
 const DISABLED_MANAGED_SKILL_NAMES = Object.entries(MANAGED_SKILL_ENTRY_OVERRIDES)
   .filter(([, value]) => value.enabled === false)
   .map(([name]) => name);
+
+const MANAGED_WEB_SEARCH_POLICY_PROMPT = [
+  '## Web Search',
+  '',
+  'Built-in `web_search` is disabled in this workspace. Do not ask for or rely on the Brave Search API.',
+  '',
+  'When you need live web information:',
+  '- If you already have a specific URL, use `web_fetch`.',
+  '- If you need search discovery, dynamic pages, or interactive browsing, use the built-in `browser` tool.',
+  '- Only use the LobsterAI `web-search` skill when local command execution is available. Native channel sessions may deny `exec`, so prefer `browser` or `web_fetch` there.',
+  '',
+  'Do not claim you searched the web unless you actually used `browser`, `web_fetch`, or the LobsterAI `web-search` skill.',
+].join('\n');
 
 const sessionSnapshotContainsDisabledManagedSkill = (entry: Record<string, unknown>): boolean => {
   const skillsSnapshot = entry.skillsSnapshot;
@@ -400,6 +415,17 @@ export class OpenClawConfigSync {
       },
       commands: {
         ownerAllowFrom: MANAGED_OWNER_ALLOW_FROM,
+      },
+      tools: {
+        deny: [...MANAGED_TOOL_DENY],
+        web: {
+          search: {
+            enabled: false,
+          },
+        },
+      },
+      browser: {
+        enabled: true,
       },
       skills: {
         entries: MANAGED_SKILL_ENTRY_OVERRIDES,
@@ -803,6 +829,8 @@ export class OpenClawConfigSync {
       if (skillsPrompt) {
         sections.push(skillsPrompt);
       }
+
+      sections.push(MANAGED_WEB_SEARCH_POLICY_PROMPT);
 
       // Keep scheduled-task policy after skills so native channel sessions
       // treat it as the final app-managed override for reminder handling.

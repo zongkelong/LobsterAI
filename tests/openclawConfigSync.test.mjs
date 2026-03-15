@@ -171,6 +171,9 @@ test('sync writes native moonshot provider config and migrates matching managed 
   assert.equal(config.models.providers.moonshot.api, 'openai-completions');
   assert.equal(config.agents.defaults.model.primary, 'moonshot/kimi-k2.5');
   assert.deepEqual(config.commands.ownerAllowFrom, ['gateway-client']);
+  assert.deepEqual(config.tools.deny, ['web_search']);
+  assert.equal(config.tools.web.search.enabled, false);
+  assert.equal(config.browser.enabled, true);
 
   const sessionStore = JSON.parse(fs.readFileSync(path.join(sessionsDir, 'sessions.json'), 'utf8'));
   assert.equal(sessionStore['agent:main:lobsterai:current-session'].modelProvider, 'moonshot');
@@ -265,6 +268,11 @@ test('sync writes scheduled-task policy into managed AGENTS.md for native channe
 
   const agentsMd = fs.readFileSync(path.join(workspaceDir, 'AGENTS.md'), 'utf8');
   assert.match(agentsMd, /## Scheduled Tasks/);
+  assert.match(agentsMd, /## Web Search/);
+  assert.match(agentsMd, /Built-in `web_search` is disabled in this workspace\./);
+  assert.match(agentsMd, /use `web_fetch`/);
+  assert.match(agentsMd, /use the built-in `browser` tool/);
+  assert.match(agentsMd, /Native channel sessions may deny `exec`/);
   assert.match(agentsMd, /native `cron` tool/i);
   assert.match(agentsMd, /action: "add".*cron\.add/i);
   assert.match(agentsMd, /follow the native `cron` tool schema/i);

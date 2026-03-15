@@ -10,7 +10,7 @@ import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { CoworkRuntime, PermissionRequest } from '../libs/agentEngine/types';
 import type { CoworkStore, CoworkMessage } from '../coworkStore';
 import type { IMStore } from './imStore';
-import type { IMMessage, IMPlatform, IMMediaAttachment } from './types';
+import type { IMMessage, IMPlatform, IMMediaAttachment, IMSessionMapping } from './types';
 import { buildIMMediaInstruction } from './imMediaInstruction';
 import { analyzeIMReply } from './imReplyGuard';
 import {
@@ -108,12 +108,30 @@ export class IMCoworkHandler extends EventEmitter {
       if (!session) {
         continue;
       }
-      this.imSessionIds.add(mapping.coworkSessionId);
-      this.sessionConversationMap.set(mapping.coworkSessionId, {
-        conversationId: mapping.imConversationId,
-        platform: mapping.platform,
-      });
+      this.trackSessionMapping(mapping);
     }
+  }
+
+  private trackSessionMapping(mapping: IMSessionMapping): void {
+    this.imSessionIds.add(mapping.coworkSessionId);
+    this.sessionConversationMap.set(mapping.coworkSessionId, {
+      conversationId: mapping.imConversationId,
+      platform: mapping.platform,
+    });
+  }
+
+  private ensureTrackedSession(sessionId: string): boolean {
+    if (this.imSessionIds.has(sessionId)) {
+      return true;
+    }
+
+    const mapping = this.imStore.getSessionMappingByCoworkSessionId(sessionId);
+    if (!mapping) {
+      return false;
+    }
+
+    this.trackSessionMapping(mapping);
+    return true;
   }
 
   /**
@@ -275,11 +293,7 @@ export class IMCoworkHandler extends EventEmitter {
         this.coworkRuntime.stopSession(existing.coworkSessionId);
       } else {
         this.imStore.updateSessionLastActive(imConversationId, platform);
-        this.imSessionIds.add(existing.coworkSessionId);
-        this.sessionConversationMap.set(existing.coworkSessionId, {
-          conversationId: imConversationId,
-          platform,
-        });
+        this.trackSessionMapping(existing);
         return existing.coworkSessionId;
       }
     }
@@ -316,12 +330,8 @@ export class IMCoworkHandler extends EventEmitter {
     );
 
     // Save mapping
-    this.imStore.createSessionMapping(imConversationId, platform, session.id);
-    this.imSessionIds.add(session.id);
-    this.sessionConversationMap.set(session.id, {
-      conversationId: imConversationId,
-      platform,
-    });
+    const mapping = this.imStore.createSessionMapping(imConversationId, platform, session.id);
+    this.trackSessionMapping(mapping);
 
     return session.id;
   }
@@ -525,7 +535,7 @@ export class IMCoworkHandler extends EventEmitter {
    */
   private handleMessage(sessionId: string, message: CoworkMessage): void {
     // Only process messages from IM sessions
-    if (!this.imSessionIds.has(sessionId)) return;
+    if (!this.ensureTrackedSession(sessionId)) return;
 
     const accumulator = this.messageAccumulators.get(sessionId) ?? this.ensureBackgroundAccumulator(sessionId);
     if (accumulator) {
@@ -538,7 +548,7 @@ export class IMCoworkHandler extends EventEmitter {
    */
   private handleMessageUpdate(sessionId: string, messageId: string, content: string): void {
     // Only process updates from IM sessions
-    if (!this.imSessionIds.has(sessionId)) return;
+    if (!this.ensureTrackedSession(sessionId)) return;
 
     const accumulator = this.messageAccumulators.get(sessionId);
     if (accumulator) {
@@ -749,7 +759,7 @@ export class IMCoworkHandler extends EventEmitter {
    */
   private handlePermissionRequest(sessionId: string, request: PermissionRequest): void {
     // Only process permission requests from IM sessions
-    if (!this.imSessionIds.has(sessionId)) return;
+    if (!this.ensureTrackedSession(sessionId)) return;
     const conversation = this.sessionConversationMap.get(sessionId);
     if (!conversation) {
       this.coworkRuntime.respondToPermission(request.requestId, {
@@ -803,7 +813,7 @@ export class IMCoworkHandler extends EventEmitter {
    */
   private handleComplete(sessionId: string): void {
     // Only process complete events from IM sessions
-    if (!this.imSessionIds.has(sessionId)) return;
+    if (!this.ensureTrackedSession(sessionId)) return;
 
     this.clearPendingPermissionsBySessionId(sessionId);
     const accumulator = this.messageAccumulators.get(sessionId);
@@ -856,7 +866,7 @@ export class IMCoworkHandler extends EventEmitter {
    */
   private handleError(sessionId: string, error: string): void {
     // Only process error events from IM sessions
-    if (!this.imSessionIds.has(sessionId)) return;
+    if (!this.ensureTrackedSession(sessionId)) return;
 
     this.clearPendingPermissionsBySessionId(sessionId);
     const accumulator = this.messageAccumulators.get(sessionId);

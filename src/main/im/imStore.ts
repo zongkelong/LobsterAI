@@ -29,6 +29,12 @@ import {
   DEFAULT_IM_SETTINGS,
 } from './types';
 
+interface StoredConversationReplyRoute {
+  channel: string;
+  to: string;
+  accountId?: string;
+}
+
 export class IMStore {
   private db: Database;
   private saveDb: () => void;
@@ -529,6 +535,31 @@ export class IMStore {
     this.setConfigValue(`notification_target:${platform}`, target);
   }
 
+  getConversationReplyRoute(
+    platform: IMPlatform,
+    conversationId: string,
+  ): StoredConversationReplyRoute | null {
+    const normalizedConversationId = conversationId.trim();
+    if (!normalizedConversationId) {
+      return null;
+    }
+    return this.getConfigValue<StoredConversationReplyRoute>(
+      `conversation_reply_route:${platform}:${normalizedConversationId}`,
+    ) ?? null;
+  }
+
+  setConversationReplyRoute(
+    platform: IMPlatform,
+    conversationId: string,
+    route: StoredConversationReplyRoute,
+  ): void {
+    const normalizedConversationId = conversationId.trim();
+    if (!normalizedConversationId) {
+      return;
+    }
+    this.setConfigValue(`conversation_reply_route:${platform}:${normalizedConversationId}`, route);
+  }
+
   // ==================== Session Mapping Operations ====================
 
   /**
@@ -538,6 +569,25 @@ export class IMStore {
     const result = this.db.exec(
       'SELECT im_conversation_id, platform, cowork_session_id, created_at, last_active_at FROM im_session_mappings WHERE im_conversation_id = ? AND platform = ?',
       [imConversationId, platform]
+    );
+    if (!result[0]?.values[0]) return null;
+    const row = result[0].values[0];
+    return {
+      imConversationId: row[0] as string,
+      platform: row[1] as IMPlatform,
+      coworkSessionId: row[2] as string,
+      createdAt: row[3] as number,
+      lastActiveAt: row[4] as number,
+    };
+  }
+
+  /**
+   * Find the IM mapping that owns a given cowork session ID.
+   */
+  getSessionMappingByCoworkSessionId(coworkSessionId: string): IMSessionMapping | null {
+    const result = this.db.exec(
+      'SELECT im_conversation_id, platform, cowork_session_id, created_at, last_active_at FROM im_session_mappings WHERE cowork_session_id = ? LIMIT 1',
+      [coworkSessionId]
     );
     if (!result[0]?.values[0]) return null;
     const row = result[0].values[0];

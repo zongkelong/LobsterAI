@@ -7,6 +7,103 @@ const OWNER_ONLY_FALLBACK_PATTERN =
   /(const OWNER_ONLY_TOOL_NAME_FALLBACKS = new Set\(\[\s*\n\s*"whatsapp_login",\s*\n\s*)"cron",\s*\n(\s*"gateway"\s*\n\s*\]\);)/;
 const WECOM_EXEC_DENY_PATTERN =
   /const TOOL_DENY_BY_MESSAGE_PROVIDER = \{ voice: \["tts"\](?:,\s*wecom: \["exec", "process"\])? \};/;
+const CRON_DELIVERY_INFERENCE_OLD = `function inferDeliveryFromSessionKey(agentSessionKey) {
+\tconst rawSessionKey = agentSessionKey?.trim();
+\tif (!rawSessionKey) return null;
+\tconst parsed = parseAgentSessionKey(stripThreadSuffixFromSessionKey(rawSessionKey));
+\tif (!parsed || !parsed.rest) return null;
+\tconst parts = parsed.rest.split(":").filter(Boolean);
+\tif (parts.length === 0) return null;
+\tconst head = parts[0]?.trim().toLowerCase();
+\tif (!head || head === "main" || head === "subagent" || head === "acp") return null;
+\tconst markerIndex = parts.findIndex((part) => part === "direct" || part === "dm" || part === "group" || part === "channel");
+\tif (markerIndex === -1) return null;
+\tconst peerId = parts.slice(markerIndex + 1).join(":").trim();
+\tif (!peerId) return null;
+\tlet channel;
+\tif (markerIndex >= 1) channel = parts[0]?.trim().toLowerCase();
+\tconst delivery = {
+\t\tmode: "announce",
+\t\tto: peerId
+\t};
+\tif (channel) delivery.channel = channel;
+\treturn delivery;
+}`;
+const CRON_DELIVERY_INFERENCE_NEW = `function inferDeliveryFromSessionKey(agentSessionKey) {
+\tconst rawSessionKey = agentSessionKey?.trim();
+\tif (!rawSessionKey) return null;
+\tconst { deliveryContext, threadId } = extractDeliveryInfo(rawSessionKey);
+\tconst persistedDelivery = normalizeDeliveryContext(deliveryContext);
+\tif (persistedDelivery?.channel && persistedDelivery?.to) {
+\t\tconst delivery = {
+\t\t\tmode: "announce",
+\t\t\tchannel: persistedDelivery.channel,
+\t\t\tto: persistedDelivery.to
+\t\t};
+\t\tif (persistedDelivery.accountId) delivery.accountId = persistedDelivery.accountId;
+\t\tif (persistedDelivery.threadId != null) delivery.threadId = persistedDelivery.threadId;
+\t\telse if (threadId != null) delivery.threadId = threadId;
+\t\treturn delivery;
+\t}
+\tconst parsed = parseAgentSessionKey(stripThreadSuffixFromSessionKey(rawSessionKey));
+\tif (!parsed || !parsed.rest) return null;
+\tconst parts = parsed.rest.split(":").filter(Boolean);
+\tif (parts.length === 0) return null;
+\tconst head = parts[0]?.trim().toLowerCase();
+\tif (!head || head === "main" || head === "subagent" || head === "acp") return null;
+\tif (head === "dingtalk-connector") {
+\t\tconst accountId = parts[1]?.trim();
+\t\tconst senderId = parts[2]?.trim();
+\t\tif (accountId && senderId) {
+\t\t\tconst delivery = {
+\t\t\t\tmode: "announce",
+\t\t\t\tchannel: "dingtalk-connector",
+\t\t\t\tto: \`user:\${senderId}\`,
+\t\t\t\taccountId
+\t\t\t};
+\t\t\tif (threadId != null) delivery.threadId = threadId;
+\t\t\treturn delivery;
+\t\t}
+\t}
+\tconst markerIndex = parts.findIndex((part) => part === "direct" || part === "dm" || part === "group" || part === "channel");
+\tif (markerIndex === -1) return null;
+\tconst peerId = parts.slice(markerIndex + 1).join(":").trim();
+\tif (!peerId) return null;
+\tlet channel;
+\tif (markerIndex >= 1) channel = parts[0]?.trim().toLowerCase();
+\tconst delivery = {
+\t\tmode: "announce",
+\t\tto: peerId
+\t};
+\tif (channel) delivery.channel = channel;
+\tif (threadId != null) delivery.threadId = threadId;
+\treturn delivery;
+}`;
+const CRON_REMINDER_PROMPT_OLD = [
+  'function buildCronEventPrompt(pendingEvents, opts) {',
+  '\tconst deliverToUser = opts?.deliverToUser ?? true;',
+  '\tconst eventText = pendingEvents.join("\\n").trim();',
+  '\tif (!eventText) {',
+  '\t\tif (!deliverToUser) return "A scheduled cron event was triggered, but no event content was found. Handle this internally and reply HEARTBEAT_OK when nothing needs user-facing follow-up.";',
+  '\t\treturn "A scheduled cron event was triggered, but no event content was found. Reply HEARTBEAT_OK.";',
+  '\t}',
+  '\tif (!deliverToUser) return "A scheduled reminder has been triggered. The reminder content is:\\n\\n" + eventText + "\\n\\nHandle this reminder internally. Do not relay it to the user unless explicitly requested.";',
+  '\treturn "A scheduled reminder has been triggered. The reminder content is:\\n\\n" + eventText + "\\n\\nPlease relay this reminder to the user in a helpful and friendly way.";',
+  '}',
+].join('\n');
+const CRON_REMINDER_PROMPT_NEW = [
+  'function buildCronEventPrompt(pendingEvents, opts) {',
+  '\tconst deliverToUser = opts?.deliverToUser ?? true;',
+  '\tconst eventText = pendingEvents.join("\\n").trim();',
+  '\tif (!eventText) {',
+  '\t\tif (!deliverToUser) return "A scheduled cron event was triggered, but no event content was found. Handle this internally and reply HEARTBEAT_OK when nothing needs user-facing follow-up.";',
+  '\t\treturn "A scheduled cron event was triggered, but no event content was found. Reply HEARTBEAT_OK.";',
+  '\t}',
+  '\treturn eventText;',
+  '}',
+].join('\n');
+const CRON_REMINDER_CURRENT_TIME_BODY_OLD = 'Body: appendCronStyleCurrentTimeLine(prompt, cfg, startedAt),';
+const CRON_REMINDER_CURRENT_TIME_BODY_NEW = 'Body: hasCronEvents ? prompt : appendCronStyleCurrentTimeLine(prompt, cfg, startedAt),';
 
 const walkJsFiles = (dirPath: string, files: string[]): void => {
   let entries: fs.Dirent[];
@@ -69,6 +166,57 @@ export const patchWecomMessageProviderExecDeny = (
   };
 };
 
+export const patchCronSessionDeliveryInference = (
+  source: string,
+): { changed: boolean; content: string } => {
+  if (
+    !source.includes('function inferDeliveryFromSessionKey(agentSessionKey) {') ||
+    !source.includes('const parsed = parseAgentSessionKey(stripThreadSuffixFromSessionKey(rawSessionKey));')
+  ) {
+    return { changed: false, content: source };
+  }
+  const next = source.replace(CRON_DELIVERY_INFERENCE_OLD, CRON_DELIVERY_INFERENCE_NEW);
+  return {
+    changed: next !== source,
+    content: next,
+  };
+};
+
+export const patchCronReminderPromptEnvelope = (
+  source: string,
+): { changed: boolean; content: string } => {
+  if (
+    !source.includes('function buildCronEventPrompt(') ||
+    !source.includes('A scheduled reminder has been triggered. The reminder content is:')
+  ) {
+    return { changed: false, content: source };
+  }
+  const next = source.replace(CRON_REMINDER_PROMPT_OLD, CRON_REMINDER_PROMPT_NEW);
+  return {
+    changed: next !== source,
+    content: next,
+  };
+};
+
+export const patchCronReminderCurrentTimeSuffix = (
+  source: string,
+): { changed: boolean; content: string } => {
+  if (
+    !source.includes(CRON_REMINDER_CURRENT_TIME_BODY_OLD) ||
+    !source.includes('hasCronEvents')
+  ) {
+    return { changed: false, content: source };
+  }
+  const next = source.replace(
+    CRON_REMINDER_CURRENT_TIME_BODY_OLD,
+    CRON_REMINDER_CURRENT_TIME_BODY_NEW,
+  );
+  return {
+    changed: next !== source,
+    content: next,
+  };
+};
+
 export const applyBundledOpenClawRuntimeHotfixes = (
   runtimeRoot: string,
 ): { changed: boolean; patchedFiles: string[]; errors: string[] } => {
@@ -91,10 +239,22 @@ export const applyBundledOpenClawRuntimeHotfixes = (
     const cronOwnerPatch = patchCronToolOwnerOnly(source);
     const fallbackPatch = patchCronOwnerFallback(cronOwnerPatch.content);
     const wecomExecPatch = patchWecomMessageProviderExecDeny(fallbackPatch.content);
-    if (!cronOwnerPatch.changed && !fallbackPatch.changed && !wecomExecPatch.changed) continue;
+    const cronDeliveryPatch = patchCronSessionDeliveryInference(wecomExecPatch.content);
+    const cronReminderPromptPatch = patchCronReminderPromptEnvelope(cronDeliveryPatch.content);
+    const cronReminderTimePatch = patchCronReminderCurrentTimeSuffix(cronReminderPromptPatch.content);
+    if (
+      !cronOwnerPatch.changed &&
+      !fallbackPatch.changed &&
+      !wecomExecPatch.changed &&
+      !cronDeliveryPatch.changed &&
+      !cronReminderPromptPatch.changed &&
+      !cronReminderTimePatch.changed
+    ) {
+      continue;
+    }
 
     try {
-      fs.writeFileSync(filePath, wecomExecPatch.content, 'utf8');
+      fs.writeFileSync(filePath, cronReminderTimePatch.content, 'utf8');
       patchedFiles.push(filePath);
     } catch (error) {
       errors.push(`${filePath}: ${error instanceof Error ? error.message : String(error)}`);

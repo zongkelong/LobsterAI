@@ -4,7 +4,6 @@ const path = require('path');
 const { existsSync, readdirSync, statSync, mkdirSync, readFileSync, rmSync, cpSync, lstatSync } = require('fs');
 const { spawnSync } = require('child_process');
 const asar = require('@electron/asar');
-const { ensurePortableGit } = require('./setup-mingit.js');
 const { ensurePortablePythonRuntime, checkRuntimeHealth } = require('./setup-python-runtime.js');
 const { syncLocalOpenClawExtensions } = require('./sync-local-openclaw-extensions.cjs');
 
@@ -470,8 +469,6 @@ async function beforePack(context) {
     return;
   }
 
-  console.log('[electron-builder-hooks] Windows target detected, ensuring PortableGit is prepared...');
-  await ensurePortableGit({ required: true });
   console.log('[electron-builder-hooks] Windows target detected, ensuring portable Python runtime is prepared...');
   await ensurePortablePythonRuntime({ required: true });
   const runtimeRoot = path.join(__dirname, '..', 'resources', 'python-win');
@@ -487,19 +484,6 @@ async function beforePack(context) {
 
 async function afterPack(context) {
   if (isWindowsTarget(context)) {
-    const bashPath = findPackagedBash(context.appOutDir);
-    if (!bashPath) {
-      throw new Error(
-        'Windows package is missing bundled PortableGit bash.exe. '
-        + 'Expected one of: '
-        + `${path.join(context.appOutDir, 'resources', 'mingit', 'bin', 'bash.exe')} or `
-        + `${path.join(context.appOutDir, 'resources', 'mingit', 'usr', 'bin', 'bash.exe')}`
-      );
-    }
-
-    console.log(`[electron-builder-hooks] Verified bundled PortableGit: ${bashPath}`);
-    verifyPackagedPortableGitRuntimeDirs(context.appOutDir);
-
     const pythonExe = findPackagedPythonExecutable(context.appOutDir);
     if (!pythonExe) {
       throw new Error(

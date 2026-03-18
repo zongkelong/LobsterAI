@@ -62,13 +62,6 @@
       "filter": [
         "**/*"
       ]
-    },
-    {
-      "from": "resources/mingit",
-      "to": "mingit",
-      "filter": [
-        "**/*"
-      ]
     }
   ],
   "mac": {
@@ -130,13 +123,6 @@
     ],
     "icon": "build/icons/win/icon.ico",
     "extraResources": [
-      {
-        "from": "resources/mingit",
-        "to": "mingit",
-        "filter": [
-          "**/*"
-        ]
-      },
       {
         "from": "resources/python-win",
         "to": "python-win",

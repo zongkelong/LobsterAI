@@ -11,6 +11,7 @@ import { getElectronNodeRuntimePath } from './libs/coworkUtil';
 import { appendPythonRuntimeToEnv } from './libs/pythonRuntime';
 import { scanSkillSecurity, scanMultipleSkillDirs, mergeReports } from './libs/skillSecurity/skillSecurityScanner';
 import type { SkillSecurityReport, SecurityReportAction } from './libs/skillSecurity/skillSecurityTypes';
+import { t } from './i18n';
 
 /**
  * Resolve the user's login shell PATH on macOS/Linux.
@@ -1466,7 +1467,7 @@ export class SkillManager {
       if (skillDirs.length === 0) {
         cleanupPathSafely(cleanupPath);
         cleanupPath = null;
-        return { success: false, error: 'No SKILL.md found in source' };
+        return { success: false, error: t('skillErrNoSkillMd') };
       }
 
       // Security scan before installation

@@ -1089,12 +1089,13 @@ export class OpenClawConfigSync {
 
       const entry = rawEntry as Record<string, unknown>;
       if (parseChannelSessionKey(sessionKey) !== null) {
-        // Clean up any stale execSecurity override on channel sessions.
-        // The gateway's own channel security handles unsupported platforms;
-        // a per-session 'deny' would block exec entirely once tools.exec
-        // is configured globally.
-        if (typeof entry.execSecurity === 'string') {
-          delete entry.execSecurity;
+        // Channel (IM) sessions: set execSecurity to 'full' so the gateway
+        // skips the approval flow entirely.  Without this, the global
+        // tools.exec 'allowlist + on-miss' config would trigger approval-
+        // pending status that confuses model responses on IM channels.
+        const execSecurity = typeof entry.execSecurity === 'string' ? entry.execSecurity.trim() : '';
+        if (execSecurity !== 'full') {
+          entry.execSecurity = 'full';
           changed = true;
         }
         if (sessionSnapshotContainsDisabledManagedSkill(entry)) {

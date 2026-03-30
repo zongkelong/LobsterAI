@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useSelector } from 'react-redux';
 import { RootState } from '../../store';
 import { i18nService } from '../../services/i18n';
@@ -18,13 +19,14 @@ import { FolderIcon } from '@heroicons/react/24/solid';
 import { coworkService } from '../../services/cowork';
 import SidebarToggleIcon from '../icons/SidebarToggleIcon';
 import ComposeIcon from '../icons/ComposeIcon';
+import LazyRenderTurn, { clearHeightCache } from './LazyRenderTurn';
 import PuzzleIcon from '../icons/PuzzleIcon';
 import EllipsisHorizontalIcon from '../icons/EllipsisHorizontalIcon';
 import PencilSquareIcon from '../icons/PencilSquareIcon';
 import TrashIcon from '../icons/TrashIcon';
 import WindowTitleBar from '../window/WindowTitleBar';
 import { getCompactFolderName } from '../../utils/path';
-import { getScheduledReminderDisplayText } from '../../../common/scheduledReminderText';
+import { getScheduledReminderDisplayText } from '../../../scheduled-task/reminderText';
 
 interface CoworkSessionDetailProps {
   onManageSkills?: () => void;
@@ -38,8 +40,7 @@ interface CoworkSessionDetailProps {
 }
 
 const AUTO_SCROLL_THRESHOLD = 120;
-const NAV_HIDE_DELAY = 3000;
-const NAV_SCROLL_LOCK_DURATION = 500;
+const NAV_SCROLL_LOCK_DURATION = 800;
 const NAV_BOTTOM_SNAP_THRESHOLD = 20;
 const INVALID_FILE_NAME_PATTERN = /[<>:"/\\|?*\u0000-\u001F]/g;
 
@@ -1295,17 +1296,26 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
 
-  // Turn navigation states
-  // currentTurnIndex (state) drives UI rendering; currentTurnIndexRef (ref) provides
-  // up-to-date value inside callbacks (avoids stale closure). Both must be updated together.
-  const [currentTurnIndex, setCurrentTurnIndex] = useState(0);
-  const currentTurnIndexRef = useRef(0);
-  const [showTurnNav, setShowTurnNav] = useState(false);
-  const hideNavTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Clear lazy-render height cache when session changes
+  const sessionId = currentSession?.id;
+  useEffect(() => {
+    clearHeightCache();
+  }, [sessionId]);
+
+  // Rail navigation states
+  const [currentRailIndex, setCurrentRailIndex] = useState(-1);
+  const currentRailIndexRef = useRef(-1);
+  const railItemCountRef = useRef(0);
+  // Mapping: turnIndex → { first: firstRailIdx, last: lastRailIdx }
+  const turnToRailRangeRef = useRef<{ first: number; last: number }[]>([]);
   const isNavigatingRef = useRef(false);
   const navigatingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const turnElsCacheRef = useRef<HTMLElement[]>([]);
+  const railLinesRef = useRef<HTMLDivElement>(null);
   const [isScrollable, setIsScrollable] = useState(false);
+  const [hoveredRailIndex, setHoveredRailIndex] = useState<number | null>(null);
+  const [isRailHovered, setIsRailHovered] = useState(false);
+  const [railTooltip, setRailTooltip] = useState<{ label: string; top: number; right: number; isUser: boolean } | null>(null);
 
   // Menu and action states
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
@@ -1344,21 +1354,19 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   // Cleanup nav timers on unmount
   useEffect(() => {
     return () => {
-      if (hideNavTimerRef.current) clearTimeout(hideNavTimerRef.current);
       if (navigatingTimerRef.current) clearTimeout(navigatingTimerRef.current);
     };
   }, []);
 
   // Reset nav state when session changes
   useEffect(() => {
-    setShowTurnNav(false);
     setIsScrollable(false);
-    setCurrentTurnIndex(0);
-    currentTurnIndexRef.current = 0;
+    setCurrentRailIndex(-1);
+    currentRailIndexRef.current = -1;
     isNavigatingRef.current = false;
     turnElsCacheRef.current = [];
-    if (hideNavTimerRef.current) clearTimeout(hideNavTimerRef.current);
     if (navigatingTimerRef.current) clearTimeout(navigatingTimerRef.current);
+    setHoveredRailIndex(null);
   }, [currentSession?.id]);
 
   // Close menu on outside click
@@ -1674,62 +1682,92 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
     setIsScrollable((prev) => (prev === scrollable ? prev : scrollable));
     if (!scrollable) return;
 
-    // Show turn nav and reset hide timer (use functional updater to avoid redundant re-renders)
-    setShowTurnNav((prev) => (prev ? prev : true));
-
-    if (hideNavTimerRef.current) clearTimeout(hideNavTimerRef.current);
-    hideNavTimerRef.current = setTimeout(() => setShowTurnNav(false), NAV_HIDE_DELAY);
-
     // Skip index recalculation during programmatic navigation
     if (isNavigatingRef.current) return;
 
-    // Update current turn index based on cached turn elements
+    // Use turn-level elements (always in DOM, even for lazy-rendered turns) for scroll detection
     const turnEls = turnElsCacheRef.current;
-    if (turnEls.length === 0) return;
+    const railCount = railItemCountRef.current;
+    if (turnEls.length === 0 || railCount === 0) return;
 
-    // If at very bottom, snap to last turn (use smaller threshold than auto-scroll)
+    // If at very bottom, snap to last rail item
     if (distanceToBottom <= NAV_BOTTOM_SNAP_THRESHOLD) {
-      const lastIndex = turnEls.length - 1;
-      currentTurnIndexRef.current = lastIndex;
-      setCurrentTurnIndex(lastIndex);
+      const lastRail = railCount - 1;
+      if (currentRailIndexRef.current !== lastRail) {
+        currentRailIndexRef.current = lastRail;
+        setCurrentRailIndex(lastRail);
+      }
       return;
     }
 
+    // Find current turn based on turn element offsetTop
     const scrollTop = container.scrollTop;
-    let visibleIndex = 0;
+    let currentTurn = 0;
     for (let i = 0; i < turnEls.length; i++) {
       if (turnEls[i].offsetTop <= scrollTop + 80) {
-        visibleIndex = i;
+        currentTurn = i;
       } else {
         break;
       }
     }
-    currentTurnIndexRef.current = visibleIndex;
-    setCurrentTurnIndex(visibleIndex);
+
+    // Map turn to rail index: check if scrolled past the midpoint of the turn
+    // (first half → user message = first rail item, second half → assistant = last rail item)
+    const range = turnToRailRangeRef.current[currentTurn];
+    if (!range) return;
+    let railIdx = range.first;
+    if (range.first !== range.last) {
+      const turnEl = turnEls[currentTurn];
+      const nextTurnTop = currentTurn + 1 < turnEls.length
+        ? turnEls[currentTurn + 1].offsetTop
+        : container.scrollHeight;
+      const turnMid = turnEl.offsetTop + (nextTurnTop - turnEl.offsetTop) / 2;
+      if (scrollTop + 80 >= turnMid) {
+        railIdx = range.last;
+      }
+    }
+
+    if (currentRailIndexRef.current !== railIdx) {
+      currentRailIndexRef.current = railIdx;
+      setCurrentRailIndex(railIdx);
+    }
   }, []);
 
-  const navigateToTurn = useCallback((direction: 'prev' | 'next') => {
-    const turnEls = turnElsCacheRef.current;
-    if (turnEls.length === 0) return;
-    const idx = currentTurnIndexRef.current;
-    const targetIndex = direction === 'prev' ? idx - 1 : idx + 1;
-    if (targetIndex < 0 || targetIndex >= turnEls.length) return;
+  const navigateToRailItem = useCallback((railIndex: number) => {
+    if (railIndex < 0 || railIndex >= railItemCountRef.current) return;
 
-    // Block scroll handler from overriding index during smooth scroll
+    // Find the turn that contains this rail item
+    const ranges = turnToRailRangeRef.current;
+    let targetTurnIdx = -1;
+    for (let t = 0; t < ranges.length; t++) {
+      if (ranges[t] && railIndex >= ranges[t].first && railIndex <= ranges[t].last) {
+        targetTurnIdx = t;
+        break;
+      }
+    }
+
     isNavigatingRef.current = true;
     if (navigatingTimerRef.current) clearTimeout(navigatingTimerRef.current);
     navigatingTimerRef.current = setTimeout(() => { isNavigatingRef.current = false; }, NAV_SCROLL_LOCK_DURATION);
 
-    turnEls[targetIndex].scrollIntoView({ behavior: 'smooth', block: 'start' });
-    currentTurnIndexRef.current = targetIndex;
-    setCurrentTurnIndex(targetIndex);
-    // Reset hide timer
-    setShowTurnNav(true);
-    if (hideNavTimerRef.current) clearTimeout(hideNavTimerRef.current);
-    hideNavTimerRef.current = setTimeout(() => setShowTurnNav(false), NAV_HIDE_DELAY);
-  }, []);
+    // Try to scroll to the exact data-rail-index element if it's in the DOM
+    const container = scrollContainerRef.current;
+    if (container) {
+      const el = container.querySelector<HTMLElement>(`[data-rail-index="${railIndex}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else if (targetTurnIdx >= 0) {
+        // Fallback: scroll to the turn element (always in DOM)
+        const turnEls = turnElsCacheRef.current;
+        if (targetTurnIdx < turnEls.length) {
+          turnEls[targetTurnIdx].scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }
+    }
 
-  // Get the last message content for auto-scroll on streaming updates
+    currentRailIndexRef.current = railIndex;
+    setCurrentRailIndex(railIndex);
+  }, []);
   const lastMessage = currentSession?.messages?.[currentSession.messages.length - 1];
   const lastMessageContent = lastMessage?.content;
 
@@ -1779,15 +1817,47 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const displayItems = useMemo(() => messages ? buildDisplayItems(messages) : [], [messages]);
   const turns = useMemo(() => buildConversationTurns(displayItems), [displayItems]);
 
-  // Cache turn DOM elements when turns change
+  // Cache turn-level DOM elements (data-turn-index, always in DOM even for lazy turns)
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) { turnElsCacheRef.current = []; return; }
-    // DOM is already committed when useEffect runs, query synchronously
     turnElsCacheRef.current = Array.from(
       container.querySelectorAll<HTMLElement>('[data-turn-index]')
     );
   }, [turns]);
+
+  // Sync rail index when turns change or rail first appears (isScrollable becomes true)
+  useEffect(() => {
+    // After turns/scrollable change, if rail index is uninitialized (-1) or out of bounds,
+    // wait for next frame so render IIFE has updated railItemCountRef, then sync
+    const frameId = requestAnimationFrame(() => {
+      const count = railItemCountRef.current;
+      if (count === 0) return;
+      const idx = currentRailIndexRef.current;
+      if (idx < 0 || idx >= count) {
+        const resolved = count - 1;
+        currentRailIndexRef.current = resolved;
+        setCurrentRailIndex(resolved);
+      }
+    });
+    return () => cancelAnimationFrame(frameId);
+  }, [turns, isScrollable]);
+
+  // Scroll rail lines container to keep active item visible (without affecting page scroll)
+  useEffect(() => {
+    const container = railLinesRef.current;
+    if (!container || currentRailIndex < 0) return;
+    const activeEl = container.children[currentRailIndex] as HTMLElement | undefined;
+    if (!activeEl) return;
+    // Manual scroll calculation to avoid scrollIntoView bubbling to parent scrollable
+    const elTop = activeEl.offsetTop;
+    const elBottom = elTop + activeEl.offsetHeight;
+    if (elTop < container.scrollTop) {
+      container.scrollTop = elTop;
+    } else if (elBottom > container.scrollTop + container.clientHeight) {
+      container.scrollTop = elBottom - container.clientHeight;
+    }
+  }, [currentRailIndex]);
 
   // Auto scroll to bottom when new messages arrive or content updates (streaming)
   useEffect(() => {
@@ -1799,11 +1869,13 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       container.scrollTop = container.scrollHeight;
       setIsScrollable(container.scrollHeight > container.clientHeight);
     }
-    // Sync turn index to last when auto-scrolled to bottom
+    // Sync rail index to last when auto-scrolled to bottom
     if (turns.length > 0) {
-      const lastIndex = turns.length - 1;
-      currentTurnIndexRef.current = lastIndex;
-      setCurrentTurnIndex(lastIndex);
+      // Use -1 when rail hasn't rendered yet (count is 0),
+      // so the render IIFE resolvedRailIndex fallback picks the last item
+      const lastRail = railItemCountRef.current > 0 ? railItemCountRef.current - 1 : -1;
+      currentRailIndexRef.current = lastRail;
+      setCurrentRailIndex(lastRail);
     }
   }, [currentSession?.messages?.length, lastMessageContent, isStreaming, shouldAutoScroll, turns.length]);
 
@@ -1813,6 +1885,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   }
 
   const renderConversationTurns = () => {
+    let railCounter = 0;
     if (turns.length === 0) {
       if (!isStreaming) return null;
       return (
@@ -1835,16 +1908,28 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
       const isLastTurn = index === turns.length - 1;
       const showTypingIndicator = isStreaming && isLastTurn && !hasRenderableAssistantContent(turn);
       const showAssistantBlock = turn.assistantItems.length > 0 || showTypingIndicator;
+      // Always render last 3 turns (needed for streaming, auto-scroll, and smooth UX)
+      const alwaysRender = index >= turns.length - 3;
+
+      // Compute rail indices for user/assistant messages (must match rail IIFE logic)
+      let asstContent = '';
+      for (const item of turn.assistantItems) {
+        if (item.type === 'assistant' && item.message?.content) {
+          asstContent += item.message.content;
+        }
+      }
+      const userRailIdx = turn.userMessage ? railCounter++ : -1;
+      const asstRailIdx = asstContent ? railCounter++ : -1;
 
       return (
-        <div key={turn.id} data-turn-index={index}>
+        <LazyRenderTurn key={turn.id} turnId={turn.id} alwaysRender={alwaysRender} data-turn-index={index}>
           {turn.userMessage && (
-            <div data-export-role="user-message">
+            <div data-export-role="user-message" {...(userRailIdx >= 0 ? { 'data-rail-index': userRailIdx } : undefined)}>
               <UserMessageItem message={turn.userMessage} skills={skills} />
             </div>
           )}
           {showAssistantBlock && (
-            <div data-export-role="assistant-block">
+            <div data-export-role="assistant-block" {...(asstRailIdx >= 0 ? { 'data-rail-index': asstRailIdx } : undefined)}>
               <AssistantTurnBlock
                 turn={turn}
                 resolveLocalFilePath={resolveLocalFilePath}
@@ -1854,7 +1939,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
               />
             </div>
           )}
-        </div>
+        </LazyRenderTurn>
       );
     });
   };
@@ -2035,47 +2120,218 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         <div
           ref={scrollContainerRef}
           onScroll={handleMessagesScroll}
-          className="h-full min-h-0 overflow-y-auto pt-3"
+          className={`h-full min-h-0 overflow-y-auto pt-3 ${turns.length > 1 && isScrollable ? 'pr-8' : 'pr-3'}`}
         >
           {renderConversationTurns()}
           <div className="h-20" />
         </div>
 
-        {/* Turn Navigation Buttons */}
+        {/* Turn Navigation Rail — to the left of scrollbar */}
         {turns.length > 1 && isScrollable && (
           <div
-            className={`absolute right-6 top-1/2 -translate-y-1/2 flex flex-col rounded-lg overflow-hidden shadow-lg transition-opacity duration-300 z-10
-
-              dark:bg-claude-darkSurface/90 bg-claude-surface/90 backdrop-blur-sm
-              border dark:border-claude-darkBorder border-claude-border
-              ${showTurnNav ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+            className="absolute right-[18px] top-1/2 -translate-y-1/2 w-5 flex flex-col items-end z-10"
+            style={{ maxHeight: 'calc(100% - 40px)' }}
+            onMouseEnter={() => setIsRailHovered(true)}
+            onMouseLeave={() => {
+              setIsRailHovered(false);
+              setHoveredRailIndex(null);
+              setRailTooltip(null);
+            }}
           >
+            {/* Up Arrow */}
             <button
               type="button"
-              onClick={() => currentTurnIndex > 0 && navigateToTurn('prev')}
-              className={`px-1.5 py-3 transition-colors dark:text-claude-darkText text-claude-text
-                ${currentTurnIndex <= 0
-                  ? 'opacity-30 cursor-default'
-                  : 'dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover cursor-pointer'}`}
+              onClick={() => {
+                const resolvedRail = currentRailIndex < 0 ? railItemCountRef.current - 1 : currentRailIndex;
+                if (resolvedRail <= 0) return;
+                navigateToRailItem(resolvedRail - 1);
+              }}
+              onMouseEnter={() => { setHoveredRailIndex(null); }}
+              className={`shrink-0 flex items-center justify-center w-5 h-5 mb-2 -mr-[5px] rounded-full transition-all text-neutral-600 dark:text-neutral-400
+                ${!isRailHovered
+                  ? 'opacity-0 pointer-events-none'
+                  : (currentRailIndex < 0 ? railItemCountRef.current - 1 : currentRailIndex) <= 0
+                    ? 'opacity-30 cursor-default'
+                    : 'cursor-pointer hover:text-neutral-800 dark:hover:text-neutral-200 hover:bg-neutral-200/60 dark:hover:bg-neutral-700/60'}`}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3.5 h-3.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5" />
               </svg>
             </button>
-            <div className="dark:border-claude-darkBorder border-claude-border border-t" />
+
+            {/* Message Lines */}
+            <div
+              ref={railLinesRef}
+              className="overflow-y-auto min-h-0 flex-1"
+              style={{ scrollbarWidth: 'none' }}
+            >
+            {(() => {
+              // Build flat list of messages with their content length and turn index
+              const MIN_W = 6;  // px
+              const MAX_W = 16; // px
+              // Strip common markdown syntax for tooltip display
+              const stripMd = (s: string) => s
+                .replace(/^#+\s+/gm, '')
+                .replace(/```[\s\S]*?```/g, ' ')
+                .replace(/`[^`]*`/g, ' ')
+                .replace(/[*_~>]/g, '')
+                .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+                .replace(/\s+/g, ' ')
+                .trim();
+              // Get first meaningful text snippet from content
+              const getLabel = (content: string, fallback: string) => {
+                const stripped = stripMd(content);
+                return stripped.slice(0, 50) || fallback;
+              };
+              type RailItem = { key: string; turnIndex: number; label: string; contentLen: number; isUser: boolean };
+              const items: RailItem[] = [];
+              for (let i = 0; i < turns.length; i++) {
+                const turn = turns[i];
+                if (turn.userMessage) {
+                  const content = turn.userMessage.content ?? '';
+                  items.push({
+                    key: `${turn.id}-user`,
+                    turnIndex: i,
+                    label: getLabel(content, `Turn ${i + 1}`),
+                    contentLen: content.length,
+                    isUser: true,
+                  });
+                }
+                // Aggregate all assistant content into one line per turn
+                let asstContent = '';
+                for (const item of turn.assistantItems) {
+                  if (item.type === 'assistant' && item.message?.content) {
+                    asstContent += item.message.content;
+                  }
+                }
+                if (asstContent) {
+                  items.push({
+                    key: `${turn.id}-asst`,
+                    turnIndex: i,
+                    label: getLabel(asstContent, 'LobsterAI'),
+                    contentLen: asstContent.length,
+                    isUser: false,
+                  });
+                }
+              }
+              const maxLen = items.reduce((acc, m) => Math.max(acc, m.contentLen), 1);
+              // Sync rail item count and turn-to-rail mapping
+              railItemCountRef.current = items.length;
+              const rangeMap: { first: number; last: number }[] = [];
+              for (let ri = 0; ri < items.length; ri++) {
+                const ti = items[ri].turnIndex;
+                if (!rangeMap[ti]) {
+                  rangeMap[ti] = { first: ri, last: ri };
+                } else {
+                  rangeMap[ti].last = ri;
+                }
+              }
+              turnToRailRangeRef.current = rangeMap;
+
+              // Clamp rail index to valid range
+              const resolvedRailIndex = currentRailIndex < 0 || currentRailIndex >= items.length
+                ? items.length - 1
+                : currentRailIndex;
+
+              return items.map((msg, idx) => {
+                const isActive = idx === resolvedRailIndex;
+                const isHovered = idx === hoveredRailIndex;
+                const ratio = msg.contentLen / maxLen;
+                const lineW = Math.round(MIN_W + ratio * (MAX_W - MIN_W));
+                return (
+                  <button
+                    key={msg.key}
+                    type="button"
+                    onClick={() => {
+                      navigateToRailItem(idx);
+                    }}
+                    onMouseEnter={(e) => {
+                      setHoveredRailIndex(idx);
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const top = Math.max(8, Math.min(rect.top + rect.height / 2, window.innerHeight - 8));
+                      setRailTooltip({
+                        label: msg.label,
+                        top,
+                        right: window.innerWidth - rect.left + 8,
+                        isUser: msg.isUser,
+                      });
+                    }}
+                    onMouseLeave={() => setRailTooltip(null)}
+                    className="flex items-center justify-end cursor-pointer w-5 py-[5px]"
+                  >
+                    <div
+                      className={`h-[2px] rounded-full transition-all ${
+                        isActive || isHovered
+                          ? 'bg-neutral-800 dark:bg-neutral-200'
+                          : 'bg-neutral-300 dark:bg-neutral-600'
+                      }`}
+                      style={{ width: isActive || isHovered ? MAX_W : lineW }}
+                    />
+                  </button>
+                );
+              });
+            })()}
+            </div>
+
+            {/* Down Arrow */}
             <button
               type="button"
-              onClick={() => currentTurnIndex < turns.length - 1 && navigateToTurn('next')}
-              className={`px-1.5 py-3 transition-colors dark:text-claude-darkText text-claude-text
-                ${currentTurnIndex >= turns.length - 1
-                  ? 'opacity-30 cursor-default'
-                  : 'dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover cursor-pointer'}`}
+              onClick={() => {
+                const maxRail = railItemCountRef.current - 1;
+                const resolvedRail = currentRailIndex < 0 ? maxRail : currentRailIndex;
+                if (resolvedRail >= maxRail) return;
+                navigateToRailItem(resolvedRail + 1);
+              }}
+              onMouseEnter={() => { setHoveredRailIndex(null); }}
+              className={`shrink-0 flex items-center justify-center w-5 h-5 mt-2 -mr-[5px] rounded-full transition-all text-neutral-600 dark:text-neutral-400
+                ${!isRailHovered
+                  ? 'opacity-0 pointer-events-none'
+                  : (currentRailIndex < 0 ? railItemCountRef.current - 1 : currentRailIndex) >= railItemCountRef.current - 1
+                    ? 'opacity-30 cursor-default'
+                    : 'cursor-pointer hover:text-neutral-800 dark:hover:text-neutral-200 hover:bg-neutral-200/60 dark:hover:bg-neutral-700/60'}`}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3.5 h-3.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
               </svg>
             </button>
           </div>
+        )}
+
+        {/* Rail Tooltip — rendered via portal to escape transform context */}
+        {railTooltip && createPortal(
+          <div
+            className={`fixed z-[100] px-3.5 py-2 text-[13px] leading-snug pointer-events-none overflow-hidden
+              max-w-[240px] shadow-[0_2px_12px_rgba(0,0,0,0.12)]
+              border dark:shadow-[0_2px_12px_rgba(0,0,0,0.4)]
+              ${railTooltip.isUser
+                ? 'rounded-[12px_12px_4px_12px] bg-white border-neutral-200/80 dark:bg-neutral-800 dark:border-neutral-700'
+                : 'rounded-xl bg-neutral-50 border-neutral-200/80 dark:bg-neutral-800 dark:border-neutral-700'
+              }`}
+            style={{
+              top: railTooltip.top,
+              right: railTooltip.right,
+              transform: 'translateY(-50%)',
+            }}
+          >
+            {!railTooltip.isUser && (
+              <div className="text-[12px] font-medium mb-0.5 text-neutral-800 dark:text-neutral-200">
+                LobsterAI:
+              </div>
+            )}
+            <div
+              className="text-neutral-600 dark:text-neutral-300"
+              style={{
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
+                overflow: 'hidden',
+                wordBreak: 'break-all',
+              }}
+            >
+              {railTooltip.label}
+            </div>
+          </div>,
+          document.body
         )}
       </div>
 

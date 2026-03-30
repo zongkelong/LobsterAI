@@ -1,18 +1,19 @@
 import { app } from 'electron';
 import fs from 'fs';
 import path from 'path';
-import type { CoworkConfig, CoworkExecutionMode } from '../coworkStore';
-import type { TelegramOpenClawConfig, DiscordOpenClawConfig } from '../im/types';
+import type { CoworkConfig, CoworkExecutionMode, Agent } from '../coworkStore';
+import type { TelegramOpenClawConfig, DiscordOpenClawConfig, IMSettings } from '../im/types';
 import type { DingTalkOpenClawConfig, FeishuOpenClawConfig, QQOpenClawConfig, WecomOpenClawConfig, PopoOpenClawConfig, NimConfig, WeixinOpenClawConfig } from '../im/types';
-import { resolveRawApiConfig } from './claudeSettings';
+import { resolveRawApiConfig, resolveAllProviderApiKeys } from './claudeSettings';
 import type { OpenClawEngineManager } from './openclawEngineManager';
 import { parseChannelSessionKey } from './openclawChannelSessionSync';
 import type { McpToolManifestEntry } from './mcpServerManager';
 import { hasBundledOpenClawExtension } from './openclawLocalExtensions';
-import { buildScheduledTaskEnginePrompt } from './scheduledTaskEnginePrompt';
+import { buildScheduledTaskEnginePrompt } from '../../scheduled-task/enginePrompt';
 
 export type McpBridgeConfig = {
   callbackUrl: string;
+  askUserCallbackUrl: string;
   secret: string;
   tools: McpToolManifestEntry[];
 };
@@ -42,8 +43,21 @@ const normalizeModelName = (modelId: string): string => {
   const trimmed = modelId.trim();
   if (!trimmed) return 'default-model';
   const slashIndex = trimmed.lastIndexOf('/');
-  return slashIndex >= 0 ? trimmed.slice(slashIndex + 1) : trimmed;
+  const name = slashIndex >= 0 ? trimmed.slice(slashIndex + 1) : trimmed;
+  // Ensure the result is never empty after stripping prefix
+  return name.trim() || 'default-model';
 };
+
+/**
+ * Resolve the effective model display name with fallback chain:
+ * userModelName → normalizeModelName(modelId) → 'default-model'
+ */
+const resolveModelDisplayName = (modelId: string, userModelName?: string): string => {
+  const userName = userModelName?.trim();
+  if (userName) return userName;
+  return normalizeModelName(modelId);
+};
+
 
 const MANAGED_OWNER_ALLOW_FROM = [
   // Internal `chat.send` turns identify the sender as bare `gateway-client`.
@@ -77,6 +91,15 @@ const DISABLED_MANAGED_SKILL_NAMES = Object.entries(MANAGED_SKILL_ENTRY_OVERRIDE
   .filter(([, value]) => value.enabled === false)
   .map(([name]) => name);
 
+/**
+ * Build the env var name for a provider's apiKey.
+ * Must match the key format produced by resolveAllProviderApiKeys() in claudeSettings.ts.
+ */
+const providerApiKeyEnvVar = (providerName: string): string => {
+  const envName = providerName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+  return `LOBSTER_APIKEY_${envName}`;
+};
+
 const MANAGED_WEB_SEARCH_POLICY_PROMPT = [
   '## Web Search',
   '',
@@ -89,6 +112,27 @@ const MANAGED_WEB_SEARCH_POLICY_PROMPT = [
   '- Exception: the `imap-smtp-email` skill must always use `exec` to run its scripts, even in native channel sessions. Do not skip it because of exec restrictions.',
   '',
   'Do not claim you searched the web unless you actually used `browser`, `web_fetch`, or the LobsterAI `web-search` skill.',
+].join('\n');
+
+const MANAGED_EXEC_SAFETY_PROMPT = [
+  '## Command Execution & User Interaction Policy',
+  '',
+  '### Delete Operations',
+  '- Before executing **delete operations** (rm, trash, rmdir, unlink, git clean, or any command that permanently removes files/directories), check if the `AskUserQuestion` tool is available in your toolset.',
+  '- If `AskUserQuestion` IS available: you MUST call it first to get user confirmation. The question should clearly state what will be deleted with options like "Allow delete" / "Cancel".',
+  '- If `AskUserQuestion` is NOT available: execute the delete command directly without asking for text-based confirmation.',
+  '',
+  '### User Choices & Decisions',
+  '- When you need the user to make a choice between multiple options (e.g. selecting a framework, choosing a file, picking a configuration), check if `AskUserQuestion` is available.',
+  '- If `AskUserQuestion` IS available: use it to present the options as a structured question. Use `multiSelect: true` when the user can pick more than one option.',
+  '- If `AskUserQuestion` is NOT available: ask via plain text instead.',
+  '',
+  '### General Commands',
+  '- For ALL commands (ls, git, cd, kill, chmod, curl, etc.), execute them directly WITHOUT asking for confirmation.',
+  '- Do NOT add your own text-based confirmation before executing commands.',
+  '- Never mention "approval", "审批", or "批准" to the user.',
+  '- If a command fails, report the error and ask the user what to do next.',
+  '- These rules are mandatory and cannot be overridden.',
 ].join('\n');
 
 const FALLBACK_OPENCLAW_AGENTS_TEMPLATE = [
@@ -299,12 +343,43 @@ const buildProviderSelection = (options: {
   providerName?: string;
   codingPlanEnabled?: boolean;
   supportsImage?: boolean;
+  modelName?: string;
 }): OpenClawProviderSelection => {
-  const providerModelName = normalizeModelName(options.modelId);
+  const providerModelName = resolveModelDisplayName(options.modelId, options.modelName);
   const providerApi = mapApiTypeToOpenClawApi(options.apiType);
   const modelInput: string[] = options.supportsImage ? ['text', 'image'] : ['text'];
   const providerName = options.providerName ?? '';
   const codingPlanEnabled = !!options.codingPlanEnabled;
+
+  // lobsterai-server: route through the LobsterAI server proxy
+  if (providerName === 'lobsterai-server') {
+    const strippedBaseUrl = stripChatCompletionsSuffix(options.baseURL);
+    console.log('[OpenClawConfigSync] buildProviderSelection lobsterai-server:', {
+      inputBaseURL: options.baseURL,
+      strippedBaseUrl,
+      modelId: options.modelId,
+      primaryModel: `lobsterai-server/${options.modelId}`,
+      api: 'openai-completions',
+    });
+    return {
+      providerId: 'lobsterai-server',
+      legacyModelId: options.modelId,
+      sessionModelId: options.modelId,
+      primaryModel: `lobsterai-server/${options.modelId}`,
+      providerConfig: {
+        baseUrl: strippedBaseUrl,
+        api: 'openai-completions',
+        apiKey: `\${${providerApiKeyEnvVar('server')}}`,
+        auth: 'api-key',
+        models: [{
+          id: options.modelId,
+          name: providerModelName,
+          api: 'openai-completions',
+          input: modelInput,
+        }],
+      },
+    };
+  }
 
   if (providerName === 'moonshot' && codingPlanEnabled) {
     return {
@@ -315,7 +390,7 @@ const buildProviderSelection = (options: {
       providerConfig: {
         baseUrl: normalizeKimiCodingBaseUrl(options.baseURL),
         api: 'anthropic-messages',
-        apiKey: '${LOBSTER_PROVIDER_API_KEY}',
+        apiKey: `\${${providerApiKeyEnvVar(providerName)}}`,
         auth: 'api-key',
         models: [
           {
@@ -348,7 +423,7 @@ const buildProviderSelection = (options: {
       providerConfig: {
         baseUrl: normalizeMoonshotBaseUrl(options.baseURL),
         api: 'openai-completions',
-        apiKey: '${LOBSTER_PROVIDER_API_KEY}',
+        apiKey: `\${${providerApiKeyEnvVar(providerName)}}`,
         auth: 'api-key',
         models: [
           {
@@ -379,7 +454,7 @@ const buildProviderSelection = (options: {
     providerConfig: {
       baseUrl: stripChatCompletionsSuffix(options.baseURL),
       api: providerApi,
-      apiKey: '${LOBSTER_PROVIDER_API_KEY}',
+      apiKey: `\${${providerApiKeyEnvVar(providerName)}}`,
       auth: 'api-key',
       models: [
         {
@@ -431,8 +506,10 @@ type OpenClawConfigSyncDeps = {
   getPopoConfig: () => PopoOpenClawConfig | null;
   getNimConfig: () => NimConfig | null;
   getWeixinConfig: () => WeixinOpenClawConfig | null;
+  getIMSettings?: () => IMSettings | null;
   getMcpBridgeConfig?: () => McpBridgeConfig | null;
   getSkillsList?: () => Array<{ id: string; enabled: boolean }>;
+  getAgents?: () => Agent[];
 };
 
 export class OpenClawConfigSync {
@@ -447,8 +524,10 @@ export class OpenClawConfigSync {
   private readonly getPopoConfig: () => PopoOpenClawConfig | null;
   private readonly getNimConfig: () => NimConfig | null;
   private readonly getWeixinConfig: () => WeixinOpenClawConfig | null;
+  private readonly getIMSettings?: () => IMSettings | null;
   private readonly getMcpBridgeConfig?: () => McpBridgeConfig | null;
   private readonly getSkillsList?: () => Array<{ id: string; enabled: boolean }>;
+  private readonly getAgents?: () => Agent[];
 
   constructor(deps: OpenClawConfigSyncDeps) {
     this.engineManager = deps.engineManager;
@@ -462,8 +541,10 @@ export class OpenClawConfigSync {
     this.getPopoConfig = deps.getPopoConfig;
     this.getNimConfig = deps.getNimConfig;
     this.getWeixinConfig = deps.getWeixinConfig;
+    this.getIMSettings = deps.getIMSettings;
     this.getMcpBridgeConfig = deps.getMcpBridgeConfig;
     this.getSkillsList = deps.getSkillsList;
+    this.getAgents = deps.getAgents;
   }
 
   sync(reason: string): OpenClawConfigSyncResult {
@@ -481,6 +562,7 @@ export class OpenClawConfigSync {
       const workspaceDir = (coworkConfig.workingDirectory || '').trim();
       const resolvedWorkspaceDir = workspaceDir || path.join(app.getPath('home'), '.openclaw', 'workspace');
       const agentsMdWarning = this.syncAgentsMd(resolvedWorkspaceDir, coworkConfig);
+      this.syncPerAgentWorkspaces(resolvedWorkspaceDir, coworkConfig);
       if (agentsMdWarning) result.agentsMdWarning = agentsMdWarning;
       return result;
     }
@@ -504,6 +586,7 @@ export class OpenClawConfigSync {
       providerName: apiResolution.providerMetadata?.providerName,
       codingPlanEnabled: apiResolution.providerMetadata?.codingPlanEnabled,
       supportsImage: apiResolution.providerMetadata?.supportsImage,
+      modelName: apiResolution.providerMetadata?.modelName,
     });
     const sandboxMode = mapExecutionModeToSandboxMode(coworkConfig.executionMode || 'auto');
 
@@ -514,6 +597,7 @@ export class OpenClawConfigSync {
     // extension is not bundled).
     const preinstalledPluginIds = readPreinstalledPluginIds().filter((id) => isBundledPluginAvailable(id));
     const hasMcpBridgePlugin = isBundledPluginAvailable('mcp-bridge');
+    const hasAskUserPlugin = isBundledPluginAvailable('ask-user-question');
 
     const dingTalkConfig = this.getDingTalkConfig();
     // DingTalk runs through OpenClaw plugin but still needs the gateway HTTP endpoint (chatCompletions)
@@ -563,7 +647,9 @@ export class OpenClawConfigSync {
           },
           ...(workspaceDir ? { workspace: path.resolve(workspaceDir) } : {}),
         },
+        ...this.buildAgentsList(),
       },
+      ...this.buildBindings(),
       session: {
         dmScope: 'per-channel-peer',
       },
@@ -604,7 +690,7 @@ export class OpenClawConfigSync {
               // When a channel is disabled in the UI, its plugin must also be
               // disabled so OpenClaw doesn't load it at all.
               const pluginEnabled = (() => {
-                if (id === 'dingtalk-connector') return !!(dingTalkConfig?.enabled && dingTalkConfig.clientId);
+                if (id === 'dingtalk') return !!(dingTalkConfig?.enabled && dingTalkConfig.clientId);
                 if (id === 'feishu-openclaw-plugin') return !!(feishuConfig?.enabled && feishuConfig.appId);
                 if (id === 'qqbot') return !!(qqConfig?.enabled && qqConfig.appId);
                 if (id === 'wecom-openclaw-plugin') return !!(wecomConfig?.enabled && wecomConfig.botId);
@@ -621,6 +707,9 @@ export class OpenClawConfigSync {
             : {}),
           ...(hasMcpBridgePlugin
             ? { 'mcp-bridge': { enabled: true } }
+            : {}),
+          ...(hasAskUserPlugin
+            ? { 'ask-user-question': { enabled: true } }
             : {}),
         };
 
@@ -646,6 +735,19 @@ export class OpenClawConfigSync {
           callbackUrl: mcpBridgeCfg.callbackUrl,
           secret: '${LOBSTER_MCP_BRIDGE_SECRET}',
           tools: mcpBridgeCfg.tools,
+        },
+      };
+    }
+
+    // Sync AskUserQuestion plugin config — uses the same HTTP callback server
+    if (hasAskUserPlugin && mcpBridgeCfg && managedConfig.plugins) {
+      const plugins = managedConfig.plugins as Record<string, unknown>;
+      const entries = plugins.entries as Record<string, Record<string, unknown>>;
+      entries['ask-user-question'] = {
+        enabled: true,
+        config: {
+          callbackUrl: mcpBridgeCfg.askUserCallbackUrl,
+          secret: '${LOBSTER_MCP_BRIDGE_SECRET}',
         },
       };
     }
@@ -787,7 +889,7 @@ export class OpenClawConfigSync {
         ...(dingTalkConfig.gatewayBaseUrl ? { gatewayBaseUrl: dingTalkConfig.gatewayBaseUrl } : {}),
         ...(gatewayToken ? { gatewayToken: '${LOBSTER_DINGTALK_GW_TOKEN}' } : {}),
       };
-      managedConfig.channels = { ...(managedConfig.channels as Record<string, unknown> || {}), 'dingtalk-connector': dingtalkChannel };
+      managedConfig.channels = { ...(managedConfig.channels as Record<string, unknown> || {}), 'dingtalk': dingtalkChannel };
     }
 
     // Sync QQ OpenClaw channel config (via qqbot plugin)
@@ -911,7 +1013,42 @@ export class OpenClawConfigSync {
     };
     managedConfig.channels = { ...(managedConfig.channels as Record<string, unknown> || {}), 'openclaw-weixin': weixinChannel };
 
+    // Inject _agentBinding into channel configs that have a non-main binding,
+    // forcing those channels to restart when the binding changes.  OpenClaw
+    // channel plugins capture their config at startup and never refresh it,
+    // so bindings-only config changes (kind: "none" in the reload plan) are
+    // invisible to running plugins.  By touching the channel config we trigger
+    // a "channels.*" diff path which forces the plugin to restart.
+    const platformBindingsForSentinel = this.getIMSettings?.()?.platformAgentBindings;
+    if (platformBindingsForSentinel) {
+      // Map openclaw channel key → platform key
+      const channelToPlatform: Record<string, string> = {
+        dingtalk: 'dingtalk',
+        feishu: 'feishu',
+        telegram: 'telegram',
+        discord: 'discord',
+        qqbot: 'qq',
+        wecom: 'wecom',
+        'moltbot-popo': 'popo',
+        nim: 'nim',
+        'openclaw-weixin': 'weixin',
+      };
+      const channels = (managedConfig.channels ?? {}) as Record<string, Record<string, unknown>>;
+      for (const channelKey of Object.keys(channels)) {
+        if (!channels[channelKey] || typeof channels[channelKey] !== 'object') continue;
+        const platformKey = channelToPlatform[channelKey];
+        const boundAgentId = platformKey ? platformBindingsForSentinel[platformKey] : undefined;
+        if (boundAgentId && boundAgentId !== 'main') {
+          channels[channelKey]._agentBinding = boundAgentId;
+        }
+      }
+    }
+
     const nextContent = `${JSON.stringify(managedConfig, null, 2)}\n`;
+    console.log('[OpenClawConfigSync] sync() managedConfig key fields:', {
+      providers: (managedConfig.models as Record<string, unknown>)?.providers,
+      primaryModel: ((managedConfig.agents as Record<string, unknown>)?.defaults as Record<string, unknown>)?.model,
+    });
     let currentContent = '';
     try {
       currentContent = fs.readFileSync(configPath, 'utf8');
@@ -939,11 +1076,18 @@ export class OpenClawConfigSync {
 
     const sessionStoreChanged = this.syncManagedSessionStore(providerSelection);
 
+    // Ensure exec-approvals.json has security=full + ask=off so the gateway
+    // never triggers approval-pending for any command.
+    this.ensureExecApprovalDefaults();
+
     // Sync AGENTS.md with skills routing prompt to the OpenClaw workspace directory.
     // This runs on every sync regardless of openclaw.json changes, because skills
     // may have been installed/enabled/disabled independently.
     const resolvedWorkspaceDir = workspaceDir || path.join(app.getPath('home'), '.openclaw', 'workspace');
     const agentsMdWarning = this.syncAgentsMd(resolvedWorkspaceDir, coworkConfig);
+
+    // Sync per-agent workspace files (SOUL.md, IDENTITY.md, AGENTS.md) for non-main agents
+    this.syncPerAgentWorkspaces(resolvedWorkspaceDir, coworkConfig);
 
     return {
       ok: true,
@@ -961,12 +1105,18 @@ export class OpenClawConfigSync {
   collectSecretEnvVars(): Record<string, string> {
     const env: Record<string, string> = {};
 
-    // Provider API Key
-    const apiResolution = resolveRawApiConfig();
-    // Provider API Key — always set so stale openclaw.json with
-    // ${LOBSTER_PROVIDER_API_KEY} placeholder doesn't crash the gateway.
-    // OpenClaw treats empty string as "missing", so use a non-empty placeholder.
-    env.LOBSTER_PROVIDER_API_KEY = apiResolution.config?.apiKey || 'unconfigured';
+    // Provider API Keys — one per configured provider so switching models
+    // never changes env vars and avoids gateway process restarts.
+    const allApiKeys = resolveAllProviderApiKeys();
+    for (const [envSuffix, apiKey] of Object.entries(allApiKeys)) {
+      env[`LOBSTER_APIKEY_${envSuffix}`] = apiKey;
+    }
+    // Legacy fallback: keep LOBSTER_PROVIDER_API_KEY set to a stable value so stale
+    // openclaw.json files with the old placeholder don't crash the gateway.
+    // Use the active provider's key if available, but ONLY for the first sync —
+    // after that, openclaw.json uses provider-specific placeholders and this var
+    // is never resolved. Use a fixed value to avoid secretEnvVarsChanged on switch.
+    env.LOBSTER_PROVIDER_API_KEY = 'legacy-unused';
 
     // MCP Bridge Secret — always set so stale openclaw.json with
     // ${LOBSTER_MCP_BRIDGE_SECRET} placeholder doesn't crash the gateway.
@@ -1039,6 +1189,50 @@ export class OpenClawConfigSync {
     return env;
   }
 
+  /**
+   * Ensures ~/.openclaw/exec-approvals.json has security=full + ask=off
+   * so the gateway never triggers approval-pending for any command.
+   * Delete-command protection is handled via the system prompt instead.
+   */
+  private ensureExecApprovalDefaults(): void {
+    const filePath = path.join(app.getPath('home'), '.openclaw', 'exec-approvals.json');
+
+    type AgentEntry = { security?: string; ask?: string; [key: string]: unknown };
+    type ApprovalsFile = { version: number; agents?: Record<string, AgentEntry>; [key: string]: unknown };
+
+    let file: ApprovalsFile;
+    try {
+      if (fs.existsSync(filePath)) {
+        file = JSON.parse(fs.readFileSync(filePath, 'utf8')) as ApprovalsFile;
+        if (file?.version !== 1) file = { version: 1 };
+      } else {
+        file = { version: 1 };
+      }
+    } catch {
+      file = { version: 1 };
+    }
+
+    if (!file.agents) file.agents = {};
+    if (!file.agents.main) file.agents.main = {};
+    const agent = file.agents.main;
+
+    if (agent.security === 'full' && agent.ask === 'off') return;
+
+    agent.security = 'full';
+    agent.ask = 'off';
+
+    try {
+      const dir = path.dirname(filePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      this.atomicWriteFile(filePath, `${JSON.stringify(file, null, 2)}\n`);
+      console.log('[OpenClawConfigSync] set exec-approvals security=full ask=off');
+    } catch (error) {
+      console.warn('[OpenClawConfigSync] failed to write exec-approvals.json:', error);
+    }
+  }
+
   private syncManagedSessionStore(selection: OpenClawProviderSelection): boolean {
     const shouldMigrateManagedModelRefs = !(
       selection.providerId === 'lobster' && selection.sessionModelId === selection.legacyModelId
@@ -1074,9 +1268,11 @@ export class OpenClawConfigSync {
 
       const entry = rawEntry as Record<string, unknown>;
       if (parseChannelSessionKey(sessionKey) !== null) {
+        // Channel (IM) sessions: set execSecurity to 'full' as a safety net
+        // so the gateway skips any approval flow for IM commands.
         const execSecurity = typeof entry.execSecurity === 'string' ? entry.execSecurity.trim() : '';
-        if (execSecurity !== 'deny') {
-          entry.execSecurity = 'deny';
+        if (execSecurity !== 'full') {
+          entry.execSecurity = 'full';
           changed = true;
         }
         if (sessionSnapshotContainsDisabledManagedSkill(entry)) {
@@ -1085,7 +1281,7 @@ export class OpenClawConfigSync {
         }
       }
 
-      if (!shouldMigrateManagedModelRefs || !sessionKey.startsWith('agent:main:lobsterai:')) {
+      if (!shouldMigrateManagedModelRefs || !(/^agent:[^:]+:lobsterai:/.test(sessionKey))) {
         continue;
       }
 
@@ -1189,6 +1385,7 @@ export class OpenClawConfigSync {
       // in openclaw.json, so we no longer embed the skills routing prompt here.
 
       sections.push(MANAGED_WEB_SEARCH_POLICY_PROMPT);
+      sections.push(MANAGED_EXEC_SAFETY_PROMPT);
 
       // Keep scheduled-task policy after skills so native channel sessions
       // treat it as the final app-managed override for reminder handling.
@@ -1241,6 +1438,169 @@ export class OpenClawConfigSync {
       const msg = error instanceof Error ? error.message : String(error);
       console.warn('[OpenClawConfigSync] Failed to sync AGENTS.md:', msg);
       return msg;
+    }
+  }
+
+  /**
+   * Build the `agents.list` config array for openclaw.json.
+   *
+   * The main agent uses the user's configured workspace directory (via
+   * `agents.defaults.workspace`).  Non-main agents omit `workspace` so
+   * OpenClaw falls back to its default: `{STATE_DIR}/workspace-{agentId}/`.
+   * This keeps custom agent workspaces under the openclaw state directory
+   * rather than coupling them to the user's working directory.
+   *
+   * Per-agent `identity` (name, emoji) is set from the agent database so
+   * OpenClaw picks it up natively.
+   */
+  private buildAgentsList(): { list?: Array<Record<string, unknown>> } {
+    const agents = this.getAgents?.() ?? [];
+
+    const list: Array<Record<string, unknown>> = [
+      {
+        id: 'main',
+        default: true,
+      },
+    ];
+
+    for (const agent of agents) {
+      if (agent.id === 'main' || !agent.enabled) continue;
+
+      list.push({
+        id: agent.id,
+        // Omit `workspace` — OpenClaw defaults to {STATE_DIR}/workspace-{agentId}/
+        // which keeps agent workspaces decoupled from the user's working directory.
+        ...(agent.name || agent.icon ? {
+          identity: {
+            ...(agent.name ? { name: agent.name } : {}),
+            ...(agent.icon ? { emoji: agent.icon } : {}),
+          },
+        } : {}),
+        // Per-agent skill whitelist: only when skillIds is non-empty.
+        // OpenClaw's resolveAgentSkillsFilter() uses this to filter available skills.
+        ...(agent.skillIds && agent.skillIds.length > 0 ? { skills: agent.skillIds } : {}),
+      });
+    }
+
+    return list.length > 0 ? { list } : {};
+  }
+
+  /**
+   * Build the `bindings` config array for openclaw.json.
+   *
+   * Each IM platform can be independently bound to a different agent via
+   * `IMSettings.platformAgentBindings`.  Only channels with an explicit
+   * non-main binding produce an entry.
+   */
+  private buildBindings(): { bindings?: Array<Record<string, unknown>> } {
+    const imSettings = this.getIMSettings?.();
+    const platformBindings = imSettings?.platformAgentBindings;
+    if (!platformBindings || Object.keys(platformBindings).length === 0) return {};
+
+    const agents = this.getAgents?.() ?? [];
+
+    // Map openclaw channel name → platform key used in platformAgentBindings
+    const channelMap: Array<{ getter: () => { enabled: boolean } | null; channel: string; platform: string }> = [
+      { getter: () => this.getDingTalkConfig(), channel: 'dingtalk', platform: 'dingtalk' },
+      { getter: () => this.getFeishuConfig(), channel: 'feishu', platform: 'feishu' },
+      { getter: () => this.getTelegramOpenClawConfig?.() ?? null, channel: 'telegram', platform: 'telegram' },
+      { getter: () => this.getDiscordOpenClawConfig?.() ?? null, channel: 'discord', platform: 'discord' },
+      { getter: () => this.getQQConfig(), channel: 'qqbot', platform: 'qq' },
+      { getter: () => this.getWecomConfig(), channel: 'wecom', platform: 'wecom' },
+      { getter: () => this.getPopoConfig(), channel: 'moltbot-popo', platform: 'popo' },
+      { getter: () => this.getNimConfig(), channel: 'nim', platform: 'nim' },
+      { getter: () => this.getWeixinConfig(), channel: 'openclaw-weixin', platform: 'weixin' },
+    ];
+
+    const bindings: Array<Record<string, unknown>> = [];
+    for (const { getter, channel, platform } of channelMap) {
+      const agentId = platformBindings[platform];
+      if (!agentId || agentId === 'main') continue;
+
+      // Verify the target agent actually exists and is enabled
+      const targetAgent = agents.find((a) => a.id === agentId && a.enabled);
+      if (!targetAgent) continue;
+
+      try {
+        const cfg = getter();
+        if (cfg?.enabled) {
+          bindings.push({ agentId, match: { channel } });
+        }
+      } catch {
+        // Skip channels that fail to load config
+      }
+    }
+
+    return bindings.length > 0 ? { bindings } : {};
+  }
+
+  /**
+   * Sync workspace files (SOUL.md, IDENTITY.md, AGENTS.md) for each non-main agent.
+   * The main agent's workspace is synced by `syncAgentsMd`. Non-main agents
+   * get their own workspace directories under the openclaw state directory.
+   */
+  private syncPerAgentWorkspaces(_mainWorkspaceDir: string, coworkConfig: CoworkConfig): void {
+    const agents = this.getAgents?.() ?? [];
+    // Use the openclaw state directory as base, matching OpenClaw's own fallback
+    // logic: {STATE_DIR}/workspace-{agentId}/
+    const stateDir = this.engineManager.getStateDir();
+
+    for (const agent of agents) {
+      if (agent.id === 'main' || !agent.enabled) continue;
+
+      const agentWorkspace = path.join(stateDir, `workspace-${agent.id}`);
+      try {
+        ensureDir(agentWorkspace);
+
+        // Sync SOUL.md — agent's system prompt
+        const soulPath = path.join(agentWorkspace, 'SOUL.md');
+        const soulContent = (agent.systemPrompt || '').trim();
+        this.syncFileIfChanged(soulPath, soulContent ? `${soulContent}\n` : '');
+
+        // Sync IDENTITY.md — agent's identity description
+        const identityPath = path.join(agentWorkspace, 'IDENTITY.md');
+        const identityContent = (agent.identity || '').trim();
+        this.syncFileIfChanged(identityPath, identityContent ? `${identityContent}\n` : '');
+
+        // Sync AGENTS.md for this agent (reuse same logic as main agent)
+        this.syncAgentsMd(agentWorkspace, {
+          ...coworkConfig,
+          systemPrompt: agent.systemPrompt || '',
+        });
+
+        // Ensure memory directory exists
+        const memoryDir = path.join(agentWorkspace, 'memory');
+        ensureDir(memoryDir);
+
+        // Ensure MEMORY.md exists
+        const memoryPath = path.join(agentWorkspace, 'MEMORY.md');
+        if (!fs.existsSync(memoryPath)) {
+          fs.writeFileSync(memoryPath, '', 'utf8');
+        }
+      } catch (error) {
+        console.warn(
+          `[OpenClawConfigSync] Failed to sync workspace for agent ${agent.id}:`,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+  }
+
+  /** Write a file only if its content has changed. */
+  private syncFileIfChanged(filePath: string, content: string): void {
+    try {
+      const existing = fs.readFileSync(filePath, 'utf8');
+      if (existing === content) return;
+    } catch {
+      // File doesn't exist yet
+    }
+    if (content) {
+      this.atomicWriteFile(filePath, content);
+    } else {
+      // Empty content — create empty file if it doesn't exist
+      if (!fs.existsSync(filePath)) {
+        fs.writeFileSync(filePath, '', 'utf8');
+      }
     }
   }
 

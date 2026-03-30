@@ -23,6 +23,7 @@ const MOONSHOT_CODING_PLAN_ANTHROPIC_BASE_URL = 'https://api.kimi.com/coding';
 
 type ProviderModel = {
   id: string;
+  name?: string;
   supportsImage?: boolean;
 };
 
@@ -50,6 +51,7 @@ export type ApiConfigResolution = {
     providerName: string;
     codingPlanEnabled: boolean;
     supportsImage?: boolean;
+    modelName?: string;
   };
 };
 
@@ -58,6 +60,32 @@ let storeGetter: (() => SqliteStore | null) | null = null;
 
 export function setStoreGetter(getter: () => SqliteStore | null): void {
   storeGetter = getter;
+}
+
+// Auth token getter injected from main.ts for server model provider
+let authTokensGetter: (() => { accessToken: string; refreshToken: string } | null) | null = null;
+
+export function setAuthTokensGetter(getter: () => { accessToken: string; refreshToken: string } | null): void {
+  authTokensGetter = getter;
+}
+
+// Server base URL getter injected from main.ts
+let serverBaseUrlGetter: (() => string) | null = null;
+
+export function setServerBaseUrlGetter(getter: () => string): void {
+  serverBaseUrlGetter = getter;
+}
+
+// Cached server model metadata (populated when auth:getModels is called)
+// Keyed by modelId → { supportsImage }
+let serverModelMetadataCache: Map<string, { supportsImage?: boolean }> = new Map();
+
+export function updateServerModelMetadata(models: Array<{ modelId: string; supportsImage?: boolean }>): void {
+  serverModelMetadataCache = new Map(models.map(m => [m.modelId, { supportsImage: m.supportsImage }]));
+}
+
+export function clearServerModelMetadata(): void {
+  serverModelMetadataCache.clear();
 }
 
 const getStore = (): SqliteStore | null => {
@@ -94,6 +122,7 @@ type MatchedProvider = {
   apiFormat: AnthropicApiFormat;
   baseURL: string;
   supportsImage?: boolean;
+  modelName?: string;
 };
 
 function getEffectiveProviderApiFormat(providerName: string, apiFormat: unknown): AnthropicApiFormat {
@@ -108,6 +137,25 @@ function getEffectiveProviderApiFormat(providerName: string, apiFormat: unknown)
 
 function providerRequiresApiKey(providerName: string): boolean {
   return providerName !== 'ollama';
+}
+
+function tryLobsteraiServerFallback(modelId?: string): MatchedProvider | null {
+  const tokens = authTokensGetter?.();
+  const serverBaseUrl = serverBaseUrlGetter?.();
+  if (!tokens?.accessToken || !serverBaseUrl) return null;
+  const effectiveModelId = modelId?.trim() || '';
+  if (!effectiveModelId) return null;
+  const baseURL = `${serverBaseUrl}/api/proxy/v1`;
+  const cachedMeta = serverModelMetadataCache.get(effectiveModelId);
+  console.log('[ClaudeSettings] lobsterai-server fallback activated:', { baseURL, modelId: effectiveModelId, supportsImage: cachedMeta?.supportsImage });
+  return {
+    providerName: 'lobsterai-server',
+    providerConfig: { enabled: true, apiKey: tokens.accessToken, baseUrl: baseURL, apiFormat: 'openai', models: [{ id: effectiveModelId, supportsImage: cachedMeta?.supportsImage }] },
+    modelId: effectiveModelId,
+    apiFormat: 'openai',
+    baseURL,
+    supportsImage: cachedMeta?.supportsImage,
+  };
 }
 
 function resolveMatchedProvider(appConfig: AppConfig): { matched: MatchedProvider | null; error?: string } {
@@ -140,6 +188,8 @@ function resolveMatchedProvider(appConfig: AppConfig): { matched: MatchedProvide
   if (!modelId) {
     const fallback = resolveFallbackModel();
     if (!fallback) {
+      const serverFallback = tryLobsteraiServerFallback(configuredModelId);
+      if (serverFallback) return { matched: serverFallback };
       return { matched: null, error: 'No available model configured in enabled providers.' };
     }
     modelId = fallback.modelId;
@@ -147,6 +197,15 @@ function resolveMatchedProvider(appConfig: AppConfig): { matched: MatchedProvide
 
   let providerEntry: [string, ProviderConfig] | undefined;
   const preferredProviderName = appConfig.model?.defaultModelProvider?.trim();
+
+  // Handle lobsterai-server provider: dynamically construct from auth tokens
+  if (preferredProviderName === 'lobsterai-server') {
+    const serverMatch = tryLobsteraiServerFallback(modelId);
+    if (serverMatch) {
+      return { matched: serverMatch };
+    }
+  }
+
   if (preferredProviderName) {
     const preferredProvider = providers[preferredProviderName];
     if (
@@ -172,6 +231,8 @@ function resolveMatchedProvider(appConfig: AppConfig): { matched: MatchedProvide
       modelId = fallback.modelId;
       providerEntry = [fallback.providerName, fallback.providerConfig];
     } else {
+      const serverFallback = tryLobsteraiServerFallback(modelId);
+      if (serverFallback) return { matched: serverFallback };
       return { matched: null, error: `No enabled provider found for model: ${modelId}` };
     }
   }
@@ -220,10 +281,14 @@ function resolveMatchedProvider(appConfig: AppConfig): { matched: MatchedProvide
   }
 
   if (!baseURL) {
+    const serverFallback = tryLobsteraiServerFallback(modelId);
+    if (serverFallback) return { matched: serverFallback };
     return { matched: null, error: `Provider ${providerName} is missing base URL.` };
   }
 
   if (apiFormat === 'anthropic' && providerRequiresApiKey(providerName) && !providerConfig.apiKey?.trim()) {
+    const serverFallback = tryLobsteraiServerFallback(modelId);
+    if (serverFallback) return { matched: serverFallback };
     return { matched: null, error: `Provider ${providerName} requires API key for Anthropic-compatible mode.` };
   }
 
@@ -237,6 +302,7 @@ function resolveMatchedProvider(appConfig: AppConfig): { matched: MatchedProvide
       apiFormat,
       baseURL,
       supportsImage: matchedModel?.supportsImage,
+      modelName: matchedModel?.name,
     },
   };
 }
@@ -367,8 +433,43 @@ export function resolveRawApiConfig(): ApiConfigResolution {
       providerName: matched.providerName,
       codingPlanEnabled: !!matched.providerConfig.codingPlanEnabled,
       supportsImage: matched.supportsImage,
+      modelName: matched.modelName,
     },
   };
+}
+
+/**
+ * Collect apiKeys for ALL configured providers (not just the currently selected one).
+ * Used by OpenClaw config sync to pre-register all apiKeys as env vars at gateway
+ * startup, so switching between providers doesn't require a process restart.
+ *
+ * Returns a map of env-var-safe provider name → apiKey.
+ */
+export function resolveAllProviderApiKeys(): Record<string, string> {
+  const result: Record<string, string> = {};
+
+  // lobsterai-server: uses auth accessToken
+  const tokens = authTokensGetter?.();
+  const serverBaseUrl = serverBaseUrlGetter?.();
+  if (tokens?.accessToken && serverBaseUrl) {
+    result.SERVER = tokens.accessToken;
+  }
+
+  // All configured custom providers
+  const sqliteStore = getStore();
+  if (!sqliteStore) return result;
+  const appConfig = sqliteStore.get<AppConfig>('app_config');
+  if (!appConfig?.providers) return result;
+
+  for (const [providerName, providerConfig] of Object.entries(appConfig.providers)) {
+    if (!providerConfig?.enabled) continue;
+    const apiKey = providerConfig.apiKey?.trim();
+    if (!apiKey && providerRequiresApiKey(providerName)) continue;
+    const envName = providerName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+    result[envName] = apiKey || 'sk-lobsterai-local';
+  }
+
+  return result;
 }
 
 export function buildEnvForConfig(config: CoworkApiConfig): Record<string, string> {

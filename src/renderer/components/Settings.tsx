@@ -206,6 +206,7 @@ const normalizeApiFormat = (value: unknown): 'anthropic' | 'openai' => (
 );
 const ABOUT_CONTACT_EMAIL = 'lobsterai.project@rd.netease.com';
 const ABOUT_USER_MANUAL_URL = 'https://lobsterai.youdao.com/#/docs/lobsterai_user_manual';
+const ABOUT_USER_COMMUNITY_URL = 'https://lobsterai.youdao.com/#/about';
 const ABOUT_SERVICE_TERMS_URL = 'https://c.youdao.com/dict/hardware/lobsterai/lobsterai_service.html';
 
 // MiniMax Portal OAuth constants
@@ -619,6 +620,10 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
 
   const handleOpenUserManual = useCallback(() => {
     void window.electron.shell.openExternal(ABOUT_USER_MANUAL_URL);
+  }, []);
+
+  const handleOpenUserCommunity = useCallback(() => {
+    void window.electron.shell.openExternal(ABOUT_USER_COMMUNITY_URL);
   }, []);
 
   const handleOpenServiceTerms = useCallback(() => {
@@ -3468,7 +3473,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
                   )}
                 </div>
               </div>
-              <div className={`flex items-center justify-between px-4 py-3${testModeUnlocked ? ' border-b border-border' : ''}`}>
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border">
                 <span className="text-sm text-foreground">{i18nService.t('aboutUserManual')}</span>
                 <button
                   type="button"
@@ -3479,6 +3484,19 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice, onUpda
                   className="text-sm text-secondary hover:text-primary dark:hover:text-primary bg-transparent border-none appearance-none px-1.5 py-0.5 -mx-1.5 -my-0.5 rounded-md cursor-pointer focus:outline-none hover:bg-surface-raised transition-colors"
                 >
                   {ABOUT_USER_MANUAL_URL}
+                </button>
+              </div>
+              <div className={`flex items-center justify-between px-4 py-3${testModeUnlocked ? ' border-b border-border' : ''}`}>
+                <span className="text-sm text-foreground">{i18nService.t('aboutUserCommunity')}</span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleOpenUserCommunity();
+                  }}
+                  className="text-sm text-secondary hover:text-primary dark:hover:text-primary bg-transparent border-none appearance-none px-1.5 py-0.5 -mx-1.5 -my-0.5 rounded-md cursor-pointer focus:outline-none hover:bg-surface-raised transition-colors"
+                >
+                  {ABOUT_USER_COMMUNITY_URL}
                 </button>
               </div>
               {testModeUnlocked && (

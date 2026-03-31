@@ -1989,7 +1989,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   return (
     <div ref={detailRootRef} className="flex-1 flex flex-col bg-background h-full">
       {/* Header */}
-      <div className="draggable flex h-12 items-center justify-between px-4 border-b border-border/50 bg-surface/50 shrink-0">
+      <div className="draggable flex h-12 items-center justify-between px-4 border-b border-border bg-surface/50 shrink-0">
         {/* Left side: Toggle buttons (when collapsed) + Title */}
         <div className="flex h-full items-center gap-2 min-w-0">
           {isSidebarCollapsed && (

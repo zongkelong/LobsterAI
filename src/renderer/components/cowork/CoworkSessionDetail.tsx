@@ -34,6 +34,7 @@ interface CoworkSessionDetailProps {
   onManageSkills?: () => void;
   onContinue: (prompt: string, skillPrompt?: string, imageAttachments?: CoworkImageAttachment[]) => boolean | void | Promise<boolean | void>;
   onStop: () => void;
+  onDeleteSession?: (sessionId: string) => Promise<void>;
   onNavigateHome?: () => void;
   isSidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
@@ -1325,6 +1326,7 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   onManageSkills,
   onContinue,
   onStop,
+  onDeleteSession,
   onNavigateHome,
   isSidebarCollapsed,
   onToggleSidebar,
@@ -1788,7 +1790,11 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
 
   const handleConfirmDelete = async () => {
     if (!currentSession) return;
-    await coworkService.deleteSession(currentSession.id);
+    if (onDeleteSession) {
+      await onDeleteSession(currentSession.id);
+    } else {
+      await coworkService.deleteSession(currentSession.id);
+    }
     setShowConfirmDelete(false);
     if (onNavigateHome) {
       onNavigateHome();

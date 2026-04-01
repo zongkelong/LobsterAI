@@ -37,7 +37,11 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
   // Track if we're starting a session to prevent duplicate submissions
   const isStartingRef = useRef(false);
   // Track pending start request so stop can cancel delayed startup.
-  const pendingStartRef = useRef<{ requestId: number; cancelled: boolean } | null>(null);
+  const pendingStartRef = useRef<{
+    requestId: number;
+    cancelled: boolean;
+    cancellationAction: 'stop' | 'delete' | null;
+  } | null>(null);
   const startRequestIdRef = useRef(0);
   // Ref for CoworkPromptInput
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
@@ -164,10 +168,17 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     if (isStartingRef.current) return;
     isStartingRef.current = true;
     const requestId = ++startRequestIdRef.current;
-    pendingStartRef.current = { requestId, cancelled: false };
+    pendingStartRef.current = { requestId, cancelled: false, cancellationAction: null };
     const isPendingStartCancelled = () => {
       const pending = pendingStartRef.current;
       return !pending || pending.requestId !== requestId || pending.cancelled;
+    };
+    const getPendingCancellationAction = () => {
+      const pending = pendingStartRef.current;
+      if (!pending || pending.requestId !== requestId || !pending.cancelled) {
+        return null;
+      }
+      return pending.cancellationAction;
     };
 
     try {
@@ -285,6 +296,9 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
       // Stop immediately if user cancelled while startup request was in flight.
       if (isPendingStartCancelled() && startedSession) {
         await coworkService.stopSession(startedSession.id);
+        if (getPendingCancellationAction() === 'delete') {
+          await coworkService.deleteSession(startedSession.id);
+        }
       }
     } finally {
       if (pendingStartRef.current?.requestId === requestId) {
@@ -339,8 +353,17 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
     if (!currentSession) return;
     if (currentSession.id.startsWith('temp-') && pendingStartRef.current) {
       pendingStartRef.current.cancelled = true;
+      pendingStartRef.current.cancellationAction = 'stop';
     }
     await coworkService.stopSession(currentSession.id);
+  };
+
+  const handleDeleteSession = async (sessionId: string) => {
+    if (sessionId.startsWith('temp-') && pendingStartRef.current) {
+      pendingStartRef.current.cancelled = true;
+      pendingStartRef.current.cancellationAction = 'delete';
+    }
+    await coworkService.deleteSession(sessionId);
   };
 
   // Get selected quick action
@@ -500,6 +523,7 @@ const CoworkView: React.FC<CoworkViewProps> = ({ onRequestAppSettings, onShowSki
           onManageSkills={() => onShowSkills?.()}
           onContinue={handleContinueSession}
           onStop={handleStopSession}
+          onDeleteSession={handleDeleteSession}
           onNavigateHome={() => dispatch(clearCurrentSession())}
           isSidebarCollapsed={isSidebarCollapsed}
           onToggleSidebar={onToggleSidebar}

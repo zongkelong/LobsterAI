@@ -8,7 +8,7 @@
   "license": "MIT",
   "version": "2026.4.1",
   "openclaw": {
-    "version": "v2026.3.31",
+    "version": "v2026.4.1",
     "repo": "https://github.com/openclaw/openclaw.git",
     "plugins": [
       {
@@ -171,5 +171,6 @@
     "vite-plugin-electron-renderer": "^0.14.5",
     "vitest": "^4.1.0",
     "wait-on": "^7.2.0"
-  }
+  },
+  "packageManager": "pnpm@9.14.2+sha512.6e2baf77d06b9362294152c851c4f278ede37ab1eba3a55fda317a4a17b209f4dbb973fb250a77abc463a341fcb1f17f17cfa24091c4eb319cda0d9b84278387"
 }

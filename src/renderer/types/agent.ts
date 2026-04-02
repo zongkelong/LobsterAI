@@ -28,6 +28,8 @@ export interface PresetAgent {
   systemPromptEn: string;
   skillIds: string[];
   installed: boolean;
+  category?: string;
+  categoryEn?: string;
 }
 
 export interface CreateAgentRequest {

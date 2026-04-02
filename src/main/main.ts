@@ -805,27 +805,6 @@ const getOpenClawConfigSync = (): OpenClawConfigSync => {
           return null;
         }
       },
-      getPopoConfig: () => {
-        try {
-          return getIMGatewayManager().getConfig().popo;
-          } catch {
-          return null;
-        }
-      },
-      getNimConfig: () => {
-        try {
-          return getIMGatewayManager().getConfig().nim;
-        } catch {
-          return null;
-        }
-      },
-      getNeteaseBeeChanConfig: () => {
-        try {
-          return getIMGatewayManager().getConfig()['netease-bee'];
-        } catch {
-          return null;
-        }
-      },
       getWeixinConfig: () => {
         try {
           return getIMGatewayManager().getConfig().weixin;
@@ -3328,7 +3307,7 @@ if (!gotTheLock) {
       // Only trigger sync when explicitly requested via syncGateway flag (e.g. from
       // the global Save button), to avoid frequent gateway restarts on every field blur.
       const hasOpenClawChange = config.telegram || config.discord || config.dingtalk
-        || config.feishu || config.qq || config.wecom || config.popo || config.weixin;
+        || config.feishu || config.qq || config.wecom || config.weixin;
       if (options?.syncGateway && hasOpenClawChange && getOpenClawEngineManager().getStatus().phase === 'running') {
         scheduleImConfigSync();
       }
@@ -3964,7 +3943,9 @@ if (!gotTheLock) {
       const devPort = process.env.ELECTRON_START_URL?.match(/:(\d+)/)?.[1] || '5175';
       const cspDirectives = [
         "default-src 'self'",
-        isDev ? `script-src 'self' 'unsafe-inline' http://localhost:${devPort} ws://localhost:${devPort}` : "script-src 'self'",
+        isDev
+          ? `script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:${devPort} ws://localhost:${devPort}`
+          : "script-src 'self' 'unsafe-eval'",
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' data: https: http: localfile:",
         // 允许连接到所有域名，不做限制

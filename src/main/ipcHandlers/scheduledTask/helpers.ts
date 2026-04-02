@@ -33,7 +33,7 @@ export function listScheduledTaskChannels(): Array<{ value: string; label: strin
     if (option.value === 'dingtalk') {
       return enabledConfigKeys.has('dingtalk');
     }
-    if (option.value === 'qqbot') {
+    if (option.value === 'openclaw-qqbot') {
       return enabledConfigKeys.has('qq');
     }
     if (option.value === 'openclaw-weixin') {

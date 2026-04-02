@@ -27,12 +27,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     channelPrefixFeishu: '飞书',
     channelPrefixDingtalk: '钉钉',
     channelPrefixWecom: '企微',
-    channelPrefixNim: '云信',
     channelPrefixWeixin: '微信',
-    channelPrefixNeteaseBee: '小蜜蜂',
-    // NIM chat type labels
-    nimQChat: '圈组',
-    nimGroup: '群聊',
 
     // Timeout hint
     taskTimedOut: '[任务超时] 任务因超过最大允许时长而被自动停止。你可以继续对话以从中断处继续。',
@@ -157,16 +152,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     imWeixinOpenClawHint: '微信通过 OpenClaw 运行时运行，Bot 将在 OpenClaw Gateway 启动后自动连接。',
     imWeixinConfigReadyOpenClaw: '微信配置已就绪，通过 OpenClaw 运行。',
 
-    // NIM
-    imNimFillCredentials: '请补全 AppKey、Account 和 Token 后重新测试连通性。',
-    imNimConfigReady: '云信配置已就绪（Account: {account}）。',
-    imNimOpenClawHint: '云信通过 OpenClaw 运行时运行，Bot 将在 OpenClaw Gateway 启动后自动连接。',
-    imNimP2pOnly: '云信 IM 当前仅支持 P2P（私聊）消息。',
-    imNimP2pOnlySuggestion: '请通过私聊方式向机器人账号发送消息触发对话。',
-
-    // Xiaomifeng
-    imNeteaseBeeConfigReady: '小蜜蜂配置已就绪（Client ID: {clientId}）。',
-
     // POPO
     imPopoFillWebhookCredentials: '请补全 appKey、appSecret、token 和 aesKey 后重新测试连通性。',
     imPopoFillWsCredentials: '请补全 appKey、appSecret 和 aesKey 后重新测试连通性。',
@@ -188,12 +173,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     channelPrefixFeishu: 'Feishu',
     channelPrefixDingtalk: 'DingTalk',
     channelPrefixWecom: 'WeCom',
-    channelPrefixNim: 'NIM',
     channelPrefixWeixin: 'WeChat',
-    channelPrefixNeteaseBee: 'Xiaomifeng',
-    // NIM chat type labels
-    nimQChat: 'QChat',
-    nimGroup: 'Group',
 
     // Timeout hint
     taskTimedOut: '[Task timed out] The task was automatically stopped because it exceeded the maximum allowed duration. You can continue the conversation to pick up where it left off.',
@@ -317,16 +297,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     imWeixinConfigReady: 'WeChat configuration is ready.',
     imWeixinOpenClawHint: 'WeChat runs via OpenClaw runtime. The bot will connect automatically when OpenClaw Gateway starts.',
     imWeixinConfigReadyOpenClaw: 'WeChat configuration is ready, running via OpenClaw.',
-
-    // NIM
-    imNimFillCredentials: 'Please provide the AppKey, Account, and Token and test connectivity again.',
-    imNimConfigReady: 'NIM configuration is ready (Account: {account}).',
-    imNimOpenClawHint: 'NIM runs via OpenClaw runtime. The bot will connect automatically when OpenClaw Gateway starts.',
-    imNimP2pOnly: 'NIM currently only supports P2P (direct) messages.',
-    imNimP2pOnlySuggestion: 'Please send a direct message to the bot account to start a conversation.',
-
-    // Netease Bee
-    imNeteaseBeeConfigReady: 'Netease Bee configuration is ready (Client ID: {clientId}).',
 
     // POPO
     imPopoFillWebhookCredentials: 'Please provide the appKey, appSecret, token, and aesKey and test connectivity again.',

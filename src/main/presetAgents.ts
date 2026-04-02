@@ -11,6 +11,8 @@ export interface PresetAgent {
   systemPrompt: string;
   systemPromptEn: string;
   skillIds: string[];
+  category?: string;
+  categoryEn?: string;
 }
 
 /**
@@ -27,6 +29,8 @@ export const PRESET_AGENTS: PresetAgent[] = [
     name: '股票助手',
     nameEn: 'Stock Expert',
     icon: '📈',
+    category: '金融理财',
+    categoryEn: 'Finance',
     description:
       'A 股公告追踪、个股深度分析、交易复盘；支持美港股行情、基本面、技术指标与风险评估。',
     descriptionEn:
@@ -72,6 +76,8 @@ export const PRESET_AGENTS: PresetAgent[] = [
     name: '内容创作',
     nameEn: 'Content Writer',
     icon: '✍️',
+    category: '内容创作',
+    categoryEn: 'Content',
     description:
       '一站式内容创作：选题、撰写、排版、润色，适用于文章、营销文案和社交媒体帖子。',
     descriptionEn:
@@ -121,6 +127,8 @@ export const PRESET_AGENTS: PresetAgent[] = [
     name: '备课出卷专家',
     nameEn: 'Lesson Planner',
     icon: '📚',
+    category: '教育学习',
+    categoryEn: 'Education',
     description:
       '阅读教材和教学参考资料，生成教案、试卷、答案解析或英语听力原文。',
     descriptionEn:
@@ -160,6 +168,8 @@ export const PRESET_AGENTS: PresetAgent[] = [
     name: '内容总结助手',
     nameEn: 'Content Summarizer',
     icon: '📋',
+    category: '效率工具',
+    categoryEn: 'Productivity',
     description:
       '支持音视频、链接、文档摘要。自动识别会议、讲座、访谈等内容类型。',
     descriptionEn:
@@ -205,6 +215,8 @@ export const PRESET_AGENTS: PresetAgent[] = [
     name: '医疗健康解读',
     nameEn: 'Health Interpreter',
     icon: '🏥',
+    category: '健康医疗',
+    categoryEn: 'Health',
     description:
       '体检报告、化验单、医学指标的通俗解读，帮你看懂每一项数值的含义和注意事项。',
     descriptionEn:
@@ -272,6 +284,8 @@ export const PRESET_AGENTS: PresetAgent[] = [
     name: '萌宠管家',
     nameEn: 'Pet Care',
     icon: '🐾',
+    category: '生活日常',
+    categoryEn: 'Lifestyle',
     description:
       '猫狗日常饲养、异常行为分析、食品配料解读，做你身边有温度的宠物百科。',
     descriptionEn:

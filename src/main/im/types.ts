@@ -132,70 +132,6 @@ export interface DiscordGatewayStatus {
   lastOutboundAt: number | null;
 }
 
-// ==================== NIM (NetEase IM) Types ====================
-
-export type NimTeamPolicy = 'open' | 'allowlist' | 'disabled';
-export type NimSessionType = 'p2p' | 'team' | 'superTeam';
-
-export interface NimP2pConfig {
-  policy: 'open' | 'allowlist' | 'disabled';
-  allowFrom?: (string | number)[];
-}
-
-export interface NimTeamConfig {
-  policy: 'open' | 'allowlist' | 'disabled';
-  allowFrom?: (string | number)[];
-}
-
-export interface NimQChatConfig {
-  policy: 'open' | 'allowlist' | 'disabled';
-  allowFrom?: (string | number)[];
-}
-
-export interface NimAdvancedConfig {
-  mediaMaxMb?: number;
-  textChunkLimit?: number;
-  debug?: boolean;
-}
-
-export interface NimConfig {
-  enabled: boolean;
-  appKey: string;
-  account: string;
-  token: string;
-  p2p?: NimP2pConfig;
-  team?: NimTeamConfig;
-  qchat?: NimQChatConfig;
-  advanced?: NimAdvancedConfig;
-}
-
-export interface NimGatewayStatus {
-  connected: boolean;
-  startedAt: number | null;
-  lastError: string | null;
-  botAccount: string | null;
-  lastInboundAt: number | null;
-  lastOutboundAt: number | null;
-}
-
-// ==================== NeteaseBee (小蜜蜂) Types ====================
-
-export interface NeteaseBeeChanConfig {
-  enabled: boolean;
-  clientId: string;    // NIM 登录账号
-  secret: string;      // NIM 登录 token
-  debug?: boolean;
-}
-
-export interface NeteaseBeeChanGatewayStatus {
-  connected: boolean;
-  startedAt: number | null;
-  lastError: string | null;
-  botAccount: string | null;
-  lastInboundAt: number | null;
-  lastOutboundAt: number | null;
-}
-
 // ==================== QQ Types ====================
 
 export interface QQOpenClawConfig {
@@ -249,35 +185,6 @@ export interface WecomGatewayStatus {
   lastOutboundAt: number | null;
 }
 
-// ==================== POPO Types ====================
-
-export interface PopoOpenClawConfig {
-  enabled: boolean;
-  connectionMode: 'websocket' | 'webhook';
-  appKey: string;
-  appSecret: string;
-  token: string;
-  aesKey: string;
-  webhookBaseUrl: string;
-  webhookPath: string;
-  webhookPort: number;
-  dmPolicy: 'open' | 'pairing' | 'allowlist' | 'disabled';
-  allowFrom: string[];
-  groupPolicy: 'open' | 'allowlist' | 'disabled';
-  groupAllowFrom: string[];
-  textChunkLimit: number;
-  richTextChunkLimit: number;
-  debug: boolean;
-}
-
-export interface PopoGatewayStatus {
-  connected: boolean;
-  startedAt: number | null;
-  lastError: string | null;
-  lastInboundAt: number | null;
-  lastOutboundAt: number | null;
-}
-
 // ==================== Weixin (微信) Types ====================
 
 export interface WeixinOpenClawConfig {
@@ -306,10 +213,7 @@ export interface IMGatewayConfig {
   telegram: TelegramOpenClawConfig;
   qq: QQOpenClawConfig;
   discord: DiscordOpenClawConfig;
-  nim: NimConfig;
-  'netease-bee': NeteaseBeeChanConfig;
   wecom: WecomOpenClawConfig;
-  popo: PopoOpenClawConfig;
   weixin: WeixinOpenClawConfig;
   settings: IMSettings;
 }
@@ -327,10 +231,7 @@ export interface IMGatewayStatus {
   qq: QQGatewayStatus;
   telegram: TelegramGatewayStatus;
   discord: DiscordGatewayStatus;
-  nim: NimGatewayStatus;
-  'netease-bee': NeteaseBeeChanGatewayStatus;
   wecom: WecomGatewayStatus;
-  popo: PopoGatewayStatus;
   weixin: WeixinGatewayStatus;
 }
 
@@ -423,7 +324,6 @@ export type IMConnectivityCheckCode =
   | 'discord_group_requires_mention'
   | 'telegram_privacy_mode_hint'
   | 'dingtalk_bot_membership_hint'
-  | 'nim_p2p_only_hint'
   | 'openclaw_gateway_not_running'
   | 'qq_guild_mention_hint';
 
@@ -495,20 +395,6 @@ export const DEFAULT_DISCORD_OPENCLAW_CONFIG: DiscordOpenClawConfig = {
   debug: false,
 };
 
-export const DEFAULT_NIM_CONFIG: NimConfig = {
-  enabled: false,
-  appKey: '',
-  account: '',
-  token: '',
-};
-
-export const DEFAULT_NETEASE_BEE_CONFIG: NeteaseBeeChanConfig = {
-  enabled: false,
-  clientId: '',
-  secret: '',
-  debug: true,
-};
-
 export const DEFAULT_TELEGRAM_OPENCLAW_CONFIG: TelegramOpenClawConfig = {
   enabled: false,
   botToken: '',
@@ -554,25 +440,6 @@ export const DEFAULT_WECOM_CONFIG: WecomOpenClawConfig = {
   debug: true,
 };
 
-export const DEFAULT_POPO_CONFIG: PopoOpenClawConfig = {
-  enabled: false,
-  connectionMode: 'websocket',
-  appKey: '',
-  appSecret: '',
-  token: '',
-  aesKey: '',
-  webhookBaseUrl: '',
-  webhookPath: '/popo/callback',
-  webhookPort: 3100,
-  dmPolicy: 'open',
-  allowFrom: [],
-  groupPolicy: 'open',
-  groupAllowFrom: [],
-  textChunkLimit: 3000,
-  richTextChunkLimit: 5000,
-  debug: true,
-};
-
 export const DEFAULT_WEIXIN_CONFIG: WeixinOpenClawConfig = {
   enabled: false,
   accountId: '',
@@ -594,10 +461,7 @@ export const DEFAULT_IM_CONFIG: IMGatewayConfig = {
   telegram: DEFAULT_TELEGRAM_OPENCLAW_CONFIG,
   qq: DEFAULT_QQ_CONFIG,
   discord: DEFAULT_DISCORD_OPENCLAW_CONFIG,
-  nim: DEFAULT_NIM_CONFIG,
-  'netease-bee': DEFAULT_NETEASE_BEE_CONFIG,
   wecom: DEFAULT_WECOM_CONFIG,
-  popo: DEFAULT_POPO_CONFIG,
   weixin: DEFAULT_WEIXIN_CONFIG,
   settings: DEFAULT_IM_SETTINGS,
 };
@@ -629,24 +493,6 @@ export const DEFAULT_DISCORD_STATUS: DiscordGatewayStatus = {
   lastOutboundAt: null,
 };
 
-export const DEFAULT_NIM_STATUS: NimGatewayStatus = {
-  connected: false,
-  startedAt: null,
-  lastError: null,
-  botAccount: null,
-  lastInboundAt: null,
-  lastOutboundAt: null,
-};
-
-export const DEFAULT_NETEASE_BEE_STATUS: NeteaseBeeChanGatewayStatus = {
-  connected: false,
-  startedAt: null,
-  lastError: null,
-  botAccount: null,
-  lastInboundAt: null,
-  lastOutboundAt: null,
-};
-
 export const DEFAULT_QQ_STATUS: QQGatewayStatus = {
   connected: false,
   startedAt: null,
@@ -660,14 +506,6 @@ export const DEFAULT_WECOM_STATUS: WecomGatewayStatus = {
   startedAt: null,
   lastError: null,
   botId: null,
-  lastInboundAt: null,
-  lastOutboundAt: null,
-};
-
-export const DEFAULT_POPO_STATUS: PopoGatewayStatus = {
-  connected: false,
-  startedAt: null,
-  lastError: null,
   lastInboundAt: null,
   lastOutboundAt: null,
 };
@@ -693,10 +531,7 @@ export const DEFAULT_IM_STATUS: IMGatewayStatus = {
   },
   qq: DEFAULT_QQ_STATUS,
   discord: DEFAULT_DISCORD_STATUS,
-  nim: DEFAULT_NIM_STATUS,
-  'netease-bee': DEFAULT_NETEASE_BEE_STATUS,
   wecom: DEFAULT_WECOM_STATUS,
-  popo: DEFAULT_POPO_STATUS,
   weixin: DEFAULT_WEIXIN_STATUS,
 };
 

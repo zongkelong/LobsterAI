@@ -409,7 +409,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ mode, task, onCancel, onSaved }) =>
           >
             <option value="none">{i18nService.t('scheduledTasksFormNotifyChannelNone')}</option>
             {channelOptions.map((channel) => {
-              const unsupported = channel.value === 'openclaw-weixin' || channel.value === 'qqbot' || channel.value === 'netease-bee';
+              const unsupported = channel.value === 'openclaw-weixin' || channel.value === 'openclaw-qqbot';
               return (
                 <option key={channel.value} value={channel.value} disabled={unsupported}>
                   {unsupported

@@ -524,10 +524,7 @@ interface IMGatewayConfig {
   telegram: TelegramOpenClawConfig;
   qq: QQConfig;
   discord: DiscordOpenClawConfig;
-  nim: NimConfig;
-  'netease-bee': NeteaseBeeChanConfig;
   wecom: WecomConfig;
-  popo: PopoOpenClawConfig;
   weixin: WeixinOpenClawConfig;
   settings: IMSettings;
 }
@@ -615,45 +612,6 @@ interface DiscordOpenClawConfig {
   debug: boolean;
 }
 
-interface NimP2pConfig {
-  policy: 'open' | 'allowlist' | 'disabled';
-  allowFrom?: (string | number)[];
-}
-
-interface NimTeamConfig {
-  policy: 'open' | 'allowlist' | 'disabled';
-  allowFrom?: (string | number)[];
-}
-
-interface NimQChatConfig {
-  policy: 'open' | 'allowlist' | 'disabled';
-  allowFrom?: (string | number)[];
-}
-
-interface NimAdvancedConfig {
-  mediaMaxMb?: number;
-  textChunkLimit?: number;
-  debug?: boolean;
-}
-
-interface NimConfig {
-  enabled: boolean;
-  appKey: string;
-  account: string;
-  token: string;
-  p2p?: NimP2pConfig;
-  team?: NimTeamConfig;
-  qchat?: NimQChatConfig;
-  advanced?: NimAdvancedConfig;
-}
-
-interface NeteaseBeeChanConfig {
-  enabled: boolean;
-  clientId: string;
-  secret: string;
-  debug?: boolean;
-}
-
 interface QQConfig {
   enabled: boolean;
   appId: string;
@@ -680,25 +638,6 @@ interface WecomConfig {
   debug: boolean;
 }
 
-interface PopoOpenClawConfig {
-  enabled: boolean;
-  connectionMode: 'websocket' | 'webhook';
-  appKey: string;
-  appSecret: string;
-  token: string;
-  aesKey: string;
-  webhookBaseUrl: string;
-  webhookPath: string;
-  webhookPort: number;
-  dmPolicy: 'open' | 'pairing' | 'allowlist' | 'disabled';
-  allowFrom: string[];
-  groupPolicy: 'open' | 'allowlist' | 'disabled';
-  groupAllowFrom: string[];
-  textChunkLimit: number;
-  richTextChunkLimit: number;
-  debug: boolean;
-}
-
 interface WeixinOpenClawConfig {
   enabled: boolean;
   accountId: string;
@@ -720,10 +659,7 @@ interface IMGatewayStatus {
   qq: QQGatewayStatus;
   telegram: TelegramGatewayStatus;
   discord: DiscordGatewayStatus;
-  nim: NimGatewayStatus;
-  'netease-bee': NeteaseBeeChanGatewayStatus;
   wecom: WecomGatewayStatus;
-  popo: PopoGatewayStatus;
   weixin: WeixinGatewayStatus;
 }
 
@@ -743,7 +679,6 @@ type IMConnectivityCheckCode =
   | 'discord_group_requires_mention'
   | 'telegram_privacy_mode_hint'
   | 'dingtalk_bot_membership_hint'
-  | 'nim_p2p_only_hint'
   | 'qq_guild_mention_hint';
 
 interface IMConnectivityCheck {
@@ -796,24 +731,6 @@ interface DiscordGatewayStatus {
   lastOutboundAt: number | null;
 }
 
-interface NimGatewayStatus {
-  connected: boolean;
-  startedAt: number | null;
-  lastError: string | null;
-  botAccount: string | null;
-  lastInboundAt: number | null;
-  lastOutboundAt: number | null;
-}
-
-interface NeteaseBeeChanGatewayStatus {
-  connected: boolean;
-  startedAt: number | null;
-  lastError: string | null;
-  botAccount: string | null;
-  lastInboundAt: number | null;
-  lastOutboundAt: number | null;
-}
-
 interface QQGatewayStatus {
   connected: boolean;
   startedAt: number | null;
@@ -827,14 +744,6 @@ interface WecomGatewayStatus {
   startedAt: number | null;
   lastError: string | null;
   botId: string | null;
-  lastInboundAt: number | null;
-  lastOutboundAt: number | null;
-}
-
-interface PopoGatewayStatus {
-  connected: boolean;
-  startedAt: number | null;
-  lastError: string | null;
   lastInboundAt: number | null;
   lastOutboundAt: number | null;
 }

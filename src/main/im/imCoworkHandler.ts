@@ -20,7 +20,6 @@ import {
   type ParsedIMScheduledTaskRequest,
 } from './imScheduledTaskHandler';
 import { buildScheduledTaskEnginePrompt } from '../../scheduledTask/enginePrompt';
-import { t } from '../i18n';
 
 interface MessageAccumulator {
   messages: CoworkMessage[];
@@ -345,33 +344,13 @@ export class IMCoworkHandler extends EventEmitter {
 
   /**
    * Build a human-readable session title based on platform and sender identity.
-   *
-   * NIM title rules:
-   *   - P2P direct:  "云信-P2P-{senderName|senderId}"
-   *   - Team group:  "云信-群聊-{groupName|teamId}"
-   *   - QChat:       "云信-圈组-{groupName|channelId}"
-   *
-   * Other platforms use the original "IM-{platform}-{timestamp}" style.
    */
   private buildSessionTitle(
     platform: Platform,
     _imConversationId: string,
-    senderId?: string,
-    message?: IMMessage
+    _senderId?: string,
+    _message?: IMMessage
   ): string {
-    if (platform === 'nim') {
-      const nimLabel = t('channelPrefixNim');
-      if (message?.chatSubType === 'qchat') {
-        const channelLabel = message.groupName || _imConversationId;
-        return `${nimLabel}-${t('nimQChat')}-${channelLabel}`;
-      }
-      if (message?.chatType === 'group') {
-        const groupLabel = message.groupName || senderId || _imConversationId;
-        return `${nimLabel}-${t('nimGroup')}-${groupLabel}`;
-      }
-      const peerLabel = message?.senderName || senderId || _imConversationId;
-      return `${nimLabel}-P2P-${peerLabel}`;
-    }
     return `IM-${platform}-${Date.now()}`;
   }
 
@@ -954,11 +933,7 @@ export class IMCoworkHandler extends EventEmitter {
    * Appends media metadata to content so AI can access the files
    */
   private formatMessageWithMedia(message: IMMessage): string {
-    // POPO's moltbot-popo plugin converts newlines to HTML break tags (<br />),
-    // causing raw <br /> to appear in the AI conversation instead of actual line breaks.
-    let content = message.platform === 'popo'
-      ? message.content.replace(/<br\s*\/?>/gi, '\n')
-      : message.content;
+    let content = message.content;
 
     if (message.attachments && message.attachments.length > 0) {
       const mediaInfo = message.attachments.map((att: IMMediaAttachment) => {

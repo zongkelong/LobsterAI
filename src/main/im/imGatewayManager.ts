@@ -1,13 +1,11 @@
 /**
  * IM Gateway Manager
- * Unified manager for DingTalk, Feishu, NIM gateways
- * and Telegram, Discord, QQ, WeCom, Weixin, POPO, NeteaseBee via OpenClaw
+ * Unified manager for DingTalk, Feishu, Telegram, Discord, QQ, WeCom, Weixin via OpenClaw
  */
 
 import { EventEmitter } from 'events';
 import * as path from 'path';
 import { t } from '../i18n';
-import { NimGateway } from './nimGateway';
 import { IMChatHandler } from './imChatHandler';
 import { IMCoworkHandler } from './imCoworkHandler';
 import { IMStore } from './imStore';
@@ -83,7 +81,6 @@ export interface IMGatewayManagerOptions {
 }
 
 export class IMGatewayManager extends EventEmitter {
-  private nimGateway: NimGateway;
   private imStore: IMStore;
   private chatHandler: IMChatHandler | null = null;
   private coworkHandler: IMCoworkHandler | null = null;
@@ -117,7 +114,6 @@ export class IMGatewayManager extends EventEmitter {
     super();
 
     this.imStore = new IMStore(db, saveDb);
-    this.nimGateway = new NimGateway();
 
     // Store Cowork dependencies if provided
     if (options?.coworkRuntime && options?.coworkStore) {
@@ -141,19 +137,7 @@ export class IMGatewayManager extends EventEmitter {
    * Set up event forwarding from gateways
    */
   private setupGatewayEventForwarding(): void {
-    // DingTalk runs via OpenClaw; no direct gateway events to forward
-
-    // NIM runs via OpenClaw; no direct gateway events to forward
-
-    // netease-bee runs via OpenClaw; no direct gateway events to forward
-
-    // QQ runs via OpenClaw; no direct gateway events to forward
-
-    // WeCom runs via OpenClaw; no direct gateway events to forward
-
-    // Weixin runs via OpenClaw; no direct gateway events to forward
-
-    // POPO runs via OpenClaw; no direct gateway events to forward
+    // All platforms run via OpenClaw; no direct gateway events to forward
   }
 
   /**
@@ -162,20 +146,7 @@ export class IMGatewayManager extends EventEmitter {
    */
   reconnectAllDisconnected(): void {
     console.log('[IMGatewayManager] Reconnecting all disconnected gateways...');
-
-    // DingTalk runs via OpenClaw; no direct reconnect needed
-
-    // NIM runs via OpenClaw; no direct reconnect needed
-
-    // netease-bee runs via OpenClaw; no direct reconnect needed
-
-    // QQ runs via OpenClaw; no direct reconnection needed
-
-    // WeCom runs via OpenClaw; no direct reconnection needed
-
-    // Weixin runs via OpenClaw; no direct reconnection needed
-
-    // POPO runs via OpenClaw; no direct reconnection needed
+    // All platforms run via OpenClaw; no direct reconnect needed
   }
 
   /**
@@ -244,47 +215,22 @@ export class IMGatewayManager extends EventEmitter {
       }
     };
 
-    this.nimGateway.setMessageCallback(messageHandler);
   }
 
   /**
    * Persist the notification target for a platform after receiving a message.
+   * All platforms run via OpenClaw; notification targets are not managed locally.
    */
-  private persistNotificationTarget(platform: Platform): void {
-    try {
-      let target: any = null;
-      if (platform === 'nim') {
-        target = this.nimGateway.getNotificationTarget();
-      }
-      // WeCom runs via OpenClaw; notification target not managed locally
-      // Weixin runs via OpenClaw; notification target not managed locally
-      // POPO runs via OpenClaw; notification target not managed locally
-      if (target != null) {
-        this.imStore.setNotificationTarget(platform, target);
-      }
-    } catch (err: any) {
-      console.warn(`[IMGatewayManager] Failed to persist notification target for ${platform}:`, err.message);
-    }
+  private persistNotificationTarget(_platform: Platform): void {
+    // All platforms run via OpenClaw; notification targets not managed locally
   }
 
   /**
    * Restore notification target from SQLite after gateway starts.
+   * All platforms run via OpenClaw; notification targets are not managed locally.
    */
-  private restoreNotificationTarget(platform: Platform): void {
-    try {
-      const target = this.imStore.getNotificationTarget(platform);
-      if (target == null) return;
-
-      if (platform === 'nim') {
-        this.nimGateway.setNotificationTarget(target);
-      }
-      // WeCom runs via OpenClaw; notification target not managed locally
-      // Weixin runs via OpenClaw; notification target not managed locally
-      // POPO runs via OpenClaw; notification target not managed locally
-      console.log(`[IMGatewayManager] Restored notification target for ${platform}`);
-    } catch (err: any) {
-      console.warn(`[IMGatewayManager] Failed to restore notification target for ${platform}:`, err.message);
-    }
+  private restoreNotificationTarget(_platform: Platform): void {
+    // All platforms run via OpenClaw; notification targets not managed locally
   }
 
   /**
@@ -354,34 +300,7 @@ export class IMGatewayManager extends EventEmitter {
     }
 
 
-    // NIM now runs via OpenClaw; config sync is handled by IPC handler
-
-    // DingTalk now runs via OpenClaw; config sync is handled by IPC handler
-
-    // Feishu now runs via OpenClaw; config sync is handled by IPC handler
-
-
-    // Hot-update netease-bee config: sync OpenClaw config when credentials change.
-    // Only perform sync when syncGateway is explicitly true (i.e. user clicked Save).
-    if (options?.syncGateway && config['netease-bee']) {
-      const oldNb = previousConfig['netease-bee'];
-      const newNb = { ...oldNb, ...config['netease-bee'] };
-      const credentialsChanged =
-        newNb.clientId !== oldNb?.clientId ||
-        newNb.secret !== oldNb?.secret;
-      if (credentialsChanged) {
-        console.log('[IMGatewayManager] netease-bee credentials changed, syncing OpenClaw config...');
-        this.syncOpenClawConfig?.();
-      }
-    }
-
-    // QQ runs via OpenClaw; config changes are synced via OpenClawConfigSync
-
-    // WeCom runs via OpenClaw; config changes are synced via OpenClawConfigSync
-
-    // Weixin runs via OpenClaw; config changes are synced via OpenClawConfigSync
-
-    // POPO runs via OpenClaw; config changes are synced via OpenClawConfigSync
+    // All platforms run via OpenClaw; config changes are synced via OpenClawConfigSync
 
   }
 
@@ -447,28 +366,6 @@ export class IMGatewayManager extends EventEmitter {
         lastOutboundAt: null as number | null,
       },
       discord: discordStatus,
-      nim: (() => {
-        const nmConfig = config.nim;
-        return {
-          connected: Boolean(nmConfig?.enabled && nmConfig.appKey && nmConfig.account && nmConfig.token),
-          startedAt: null as number | null,
-          lastError: null as string | null,
-          botAccount: nmConfig?.account || null,
-          lastInboundAt: null as number | null,
-          lastOutboundAt: null as number | null,
-        };
-      })(),
-      'netease-bee': (() => {
-        const beeConfig = config['netease-bee'];
-        return {
-          connected: Boolean(beeConfig?.enabled && beeConfig?.clientId && beeConfig?.secret),
-          startedAt: null as number | null,
-          lastError: null as string | null,
-          botAccount: null as string | null,
-          lastInboundAt: null as number | null,
-          lastOutboundAt: null as number | null,
-        };
-      })(),
       wecom: {
         connected: Boolean(config.wecom?.enabled && config.wecom.botId && config.wecom.secret),
         startedAt: null as number | null,
@@ -479,13 +376,6 @@ export class IMGatewayManager extends EventEmitter {
       },
       weixin: {
         connected: Boolean(config.weixin?.enabled && config.weixin?.accountId),
-        startedAt: null as number | null,
-        lastError: null as string | null,
-        lastInboundAt: null as number | null,
-        lastOutboundAt: null as number | null,
-      },
-      popo: {
-        connected: Boolean(config.popo?.enabled && config.popo.appKey && config.popo.appSecret && config.popo.aesKey && (config.popo.connectionMode === 'websocket' || config.popo.token)),
         startedAt: null as number | null,
         lastError: null as string | null,
         lastInboundAt: null as number | null,
@@ -518,10 +408,6 @@ export class IMGatewayManager extends EventEmitter {
       return this.testDingTalkOpenClawConnectivity(configOverride);
     }
 
-    if (platform === 'nim') {
-      return this.testNimOpenClawConnectivity(configOverride);
-    }
-
     // WeCom always uses OpenClaw mode
     if (platform === 'wecom') {
       return this.testWecomOpenClawConnectivity(configOverride);
@@ -530,11 +416,6 @@ export class IMGatewayManager extends EventEmitter {
     // Weixin always uses OpenClaw mode
     if (platform === 'weixin') {
       return this.testWeixinOpenClawConnectivity(configOverride);
-    }
-
-    // POPO always uses OpenClaw mode
-    if (platform === 'popo') {
-      return this.testPopoOpenClawConnectivity(configOverride);
     }
 
     const config = this.buildMergedConfig(configOverride);
@@ -719,18 +600,6 @@ export class IMGatewayManager extends EventEmitter {
       await this.syncOpenClawConfig?.();
       await this.ensureOpenClawGatewayConnected?.();
       return;
-    } else if (platform === 'nim') {
-      // NIM runs via OpenClaw gateway (openclaw-nim plugin)
-      console.log('[IMGatewayManager] NIM in OpenClaw mode, syncing config instead of starting direct gateway');
-      await this.syncOpenClawConfig?.();
-      await this.ensureOpenClawGatewayConnected?.();
-      return;
-    } else if (platform === 'netease-bee') {
-      // netease-bee runs via OpenClaw gateway
-      console.log('[IMGatewayManager] netease-bee in OpenClaw mode, syncing config instead of starting direct gateway');
-      await this.syncOpenClawConfig?.();
-      await this.ensureOpenClawGatewayConnected?.();
-      return;
     } else if (platform === 'qq') {
       // QQ runs via OpenClaw gateway (qqbot plugin)
       console.log('[IMGatewayManager] QQ in OpenClaw mode, syncing config instead of starting direct gateway');
@@ -746,12 +615,6 @@ export class IMGatewayManager extends EventEmitter {
     } else if (platform === 'weixin') {
       // Weixin runs via OpenClaw gateway (weixin-openclaw-plugin)
       console.debug('[IMGatewayManager] Weixin in OpenClaw mode, syncing config instead of starting direct gateway');
-      await this.syncOpenClawConfig?.();
-      await this.ensureOpenClawGatewayConnected?.();
-      return;
-    } else if (platform === 'popo') {
-      // POPO runs via OpenClaw gateway (moltbot-popo plugin)
-      console.log('[IMGatewayManager] POPO in OpenClaw mode, syncing config instead of starting direct gateway');
       await this.syncOpenClawConfig?.();
       await this.ensureOpenClawGatewayConnected?.();
       return;
@@ -782,16 +645,6 @@ export class IMGatewayManager extends EventEmitter {
       console.log('[IMGatewayManager] Discord in OpenClaw mode, syncing disabled config');
       await this.syncOpenClawConfig?.();
       return;
-    } else if (platform === 'nim') {
-      // NIM runs via OpenClaw gateway
-      console.log('[IMGatewayManager] NIM in OpenClaw mode, syncing disabled config');
-      await this.syncOpenClawConfig?.();
-      return;
-    } else if (platform === 'netease-bee') {
-      // netease-bee runs via OpenClaw gateway
-      console.log('[IMGatewayManager] netease-bee in OpenClaw mode, syncing disabled config');
-      await this.syncOpenClawConfig?.();
-      return;
     } else if (platform === 'qq') {
       // QQ runs via OpenClaw gateway
       console.log('[IMGatewayManager] QQ in OpenClaw mode, syncing disabled config');
@@ -807,18 +660,13 @@ export class IMGatewayManager extends EventEmitter {
       console.debug('[IMGatewayManager] Weixin in OpenClaw mode, syncing disabled config');
       await this.syncOpenClawConfig?.();
       return;
-    } else if (platform === 'popo') {
-      // POPO runs via OpenClaw gateway
-      console.log('[IMGatewayManager] POPO in OpenClaw mode, syncing disabled config');
-      await this.syncOpenClawConfig?.();
-      return;
     }
   }
 
   /**
    * Start all enabled gateways.
    *
-   * OpenClaw platforms (dingtalk/feishu/telegram/discord/qq/wecom/weixin/popo/nim) are batched
+   * OpenClaw platforms (dingtalk/feishu/telegram/discord/qq/wecom/weixin) are batched
    * so that `syncOpenClawConfig` + `ensureOpenClawGatewayConnected` are called
    * only **once** regardless of how many OpenClaw platforms are enabled.
    * This avoids N serial gateway restarts which cause message loss, Telegram
@@ -854,15 +702,6 @@ export class IMGatewayManager extends EventEmitter {
     }
     if (config.weixin?.enabled) {
       openClawPlatformsToStart.push('weixin');
-    }
-    if (config.popo?.enabled && config.popo?.appKey && config.popo?.appSecret && config.popo?.aesKey && (config.popo.connectionMode === 'websocket' || config.popo.token)) {
-      openClawPlatformsToStart.push('popo');
-    }
-    if (config.nim?.enabled && config.nim.appKey && config.nim.account && config.nim.token) {
-      openClawPlatformsToStart.push('nim');
-    }
-    if (config['netease-bee']?.enabled && config['netease-bee']?.clientId && config['netease-bee']?.secret) {
-      openClawPlatformsToStart.push('netease-bee');
     }
 
     if (openClawPlatformsToStart.length > 0) {
@@ -900,16 +739,6 @@ export class IMGatewayManager extends EventEmitter {
       const config = this.getConfig();
       return Boolean(config.discord?.enabled && config.discord.botToken);
     }
-    if (platform === 'nim') {
-      // NIM runs via OpenClaw; consider it connected when enabled and configured
-      const config = this.getConfig();
-      return Boolean(config.nim?.enabled && config.nim.appKey && config.nim.account && config.nim.token);
-    }
-    if (platform === 'netease-bee') {
-      // netease-bee runs via OpenClaw; status comes from OpenClaw
-      const config = this.getConfig();
-      return Boolean(config['netease-bee']?.enabled && config['netease-bee']?.clientId && config['netease-bee']?.secret);
-    }
     if (platform === 'qq') {
       // QQ runs via OpenClaw; consider it connected when enabled and configured
       const config = this.getConfig();
@@ -924,11 +753,6 @@ export class IMGatewayManager extends EventEmitter {
       const config = this.getConfig();
       return Boolean(config.weixin?.enabled && config.weixin?.accountId);
     }
-    if (platform === 'popo') {
-      // POPO runs via OpenClaw; consider it connected when enabled and configured
-      const config = this.getConfig();
-      return Boolean(config.popo?.enabled && config.popo.appKey && config.popo.appSecret && config.popo.aesKey && (config.popo.connectionMode === 'websocket' || config.popo.token));
-    }
     return false;
   }
 
@@ -939,10 +763,7 @@ export class IMGatewayManager extends EventEmitter {
     }
 
     try {
-      if (platform === 'nim') {
-        // NIM runs via OpenClaw; notifications not yet supported via plugin
-        console.log('[IMGatewayManager] NIM notification via OpenClaw not yet supported');
-      } else if (platform === 'qq') {
+      if (platform === 'qq') {
         // QQ runs via OpenClaw; notifications are handled by the qqbot plugin
         console.log('[IMGatewayManager] QQ notification via OpenClaw not yet supported');
       } else if (platform === 'wecom') {
@@ -951,12 +772,6 @@ export class IMGatewayManager extends EventEmitter {
       } else if (platform === 'weixin') {
         // Weixin runs via OpenClaw; notifications are handled by the weixin-openclaw-plugin
         console.debug('[IMGatewayManager] Weixin notification via OpenClaw not yet supported');
-      } else if (platform === 'popo') {
-        // POPO runs via OpenClaw; notifications are handled by the moltbot-popo plugin
-        console.log('[IMGatewayManager] POPO notification via OpenClaw not yet supported');
-      } else if (platform === 'netease-bee') {
-        // netease-bee runs via OpenClaw; notifications not yet supported
-        console.log('[IMGatewayManager] netease-bee notification via OpenClaw not yet supported');
       }
       return true;
     } catch (error: any) {
@@ -972,10 +787,7 @@ export class IMGatewayManager extends EventEmitter {
     }
 
     try {
-      if (platform === 'nim') {
-        // NIM runs via OpenClaw; notifications not yet supported via plugin
-        console.log('[IMGatewayManager] NIM notification with media via OpenClaw not yet supported');
-      } else if (platform === 'qq') {
+      if (platform === 'qq') {
         // QQ runs via OpenClaw; notifications are handled by the qqbot plugin
         console.log('[IMGatewayManager] QQ notification with media via OpenClaw not yet supported');
       } else if (platform === 'wecom') {
@@ -984,12 +796,6 @@ export class IMGatewayManager extends EventEmitter {
       } else if (platform === 'weixin') {
         // Weixin runs via OpenClaw; notifications are handled by the weixin-openclaw-plugin
         console.debug('[IMGatewayManager] Weixin notification with media via OpenClaw not yet supported');
-      } else if (platform === 'popo') {
-        // POPO runs via OpenClaw; notifications are handled by the moltbot-popo plugin
-        console.log('[IMGatewayManager] POPO notification with media via OpenClaw not yet supported');
-      } else if (platform === 'netease-bee') {
-        // netease-bee runs via OpenClaw; notifications not yet supported
-        console.log('[IMGatewayManager] netease-bee notification via OpenClaw not yet supported');
       }
       return true;
     } catch (error: any) {
@@ -1461,116 +1267,6 @@ export class IMGatewayManager extends EventEmitter {
     }
   }
 
-  private async testNimOpenClawConnectivity(
-    configOverride?: Partial<IMGatewayConfig>
-  ): Promise<IMConnectivityTestResult> {
-    const checks: IMConnectivityCheck[] = [];
-    const testedAt = Date.now();
-    const platform: Platform = 'nim';
-
-    const mergedConfig = this.buildMergedConfig(configOverride);
-    const nimConfig = mergedConfig.nim;
-
-    if (!nimConfig?.appKey || !nimConfig?.account || !nimConfig?.token) {
-      const missing: string[] = [];
-      if (!nimConfig?.appKey) missing.push('appKey');
-      if (!nimConfig?.account) missing.push('account');
-      if (!nimConfig?.token) missing.push('token');
-      checks.push({
-        code: 'missing_credentials',
-        level: 'fail',
-        message: t('imMissingCredentials', { fields: missing.join(', ') }),
-        suggestion: t('imNimFillCredentials'),
-      });
-      return { platform, testedAt, verdict: 'fail', checks };
-    }
-
-    checks.push({
-      code: 'auth_check',
-      level: 'pass',
-      message: t('imNimConfigReady', { account: nimConfig.account }),
-    });
-
-    checks.push({
-      code: 'gateway_running',
-      level: 'info',
-      message: t('imNimOpenClawHint'),
-    });
-
-    checks.push({
-      code: 'nim_p2p_only_hint',
-      level: 'info',
-      message: t('imNimP2pOnly'),
-      suggestion: t('imNimP2pOnlySuggestion'),
-    });
-
-    const verdict: IMConnectivityVerdict = checks.some(c => c.level === 'fail')
-      ? 'fail'
-      : checks.some(c => c.level === 'warn')
-        ? 'warn'
-        : 'pass';
-
-    return { platform, testedAt, verdict, checks };
-  }
-
-  /**
-   * Test POPO connectivity when running via OpenClaw runtime.
-   * Validates config completeness; actual connection is handled by OpenClaw.
-   */
-  private async testPopoOpenClawConnectivity(
-    configOverride?: Partial<IMGatewayConfig>
-  ): Promise<IMConnectivityTestResult> {
-    const checks: IMConnectivityCheck[] = [];
-    const testedAt = Date.now();
-    const platform: Platform = 'popo';
-
-    const mergedConfig = this.buildMergedConfig(configOverride);
-    const popoConfig = mergedConfig.popo;
-
-    // Check 1: Credentials present
-    const isWebhookMode = (popoConfig?.connectionMode ?? 'websocket') === 'webhook';
-    const missing: string[] = [];
-    if (!popoConfig?.appKey) missing.push('appKey');
-    if (!popoConfig?.appSecret) missing.push('appSecret');
-    if (isWebhookMode && !popoConfig?.token) missing.push('token');
-    if (!popoConfig?.aesKey) missing.push('aesKey');
-    if (missing.length > 0) {
-      checks.push({
-        code: 'missing_credentials',
-        level: 'fail',
-        message: t('imMissingCredentials', { fields: missing.join(', ') }),
-        suggestion: isWebhookMode
-          ? t('imPopoFillWebhookCredentials')
-          : t('imPopoFillWsCredentials'),
-      });
-      return { platform, testedAt, verdict: 'fail', checks };
-    }
-
-    // Check 2: Config completeness passes
-    checks.push({
-      code: 'auth_check',
-      level: 'pass',
-      message: t('imPopoConfigReady'),
-    });
-
-    // Check 3: OpenClaw Gateway running info
-    checks.push({
-      code: 'gateway_running',
-      level: 'info',
-      message: t('imPopoOpenClawHint'),
-    });
-
-    const verdict: IMConnectivityVerdict = checks.some(c => c.level === 'fail')
-      ? 'fail'
-      : checks.some(c => c.level === 'warn')
-        ? 'warn'
-        : 'pass';
-
-    return { platform, testedAt, verdict, checks };
-  }
-
-
-
   private buildMergedConfig(configOverride?: Partial<IMGatewayConfig>): IMGatewayConfig {
     const current = this.getConfig();
     if (!configOverride) {
@@ -1584,11 +1280,8 @@ export class IMGatewayManager extends EventEmitter {
       qq: { ...current.qq, ...(configOverride.qq || {}) },
       telegram: { ...current.telegram, ...(configOverride.telegram || {}) },
       discord: { ...current.discord, ...(configOverride.discord || {}) },
-      nim: { ...current.nim, ...(configOverride.nim || {}) },
-      'netease-bee': { ...current['netease-bee'], ...(configOverride['netease-bee'] || {}) },
       wecom: { ...current.wecom, ...(configOverride.wecom || {}) },
       weixin: { ...current.weixin, ...(configOverride.weixin || {}) },
-      popo: { ...current.popo, ...(configOverride.popo || {}) },
       settings: { ...current.settings, ...(configOverride.settings || {}) },
     };
   }
@@ -1609,19 +1302,6 @@ export class IMGatewayManager extends EventEmitter {
     if (platform === 'telegram') {
       return config.telegram.botToken ? [] : ['botToken'];
     }
-    if (platform === 'nim') {
-      const fields: string[] = [];
-      if (!config.nim.appKey) fields.push('appKey');
-      if (!config.nim.account) fields.push('account');
-      if (!config.nim.token) fields.push('token');
-      return fields;
-    }
-    if (platform === 'netease-bee') {
-      const fields: string[] = [];
-      if (!config['netease-bee']?.clientId) fields.push('clientId');
-      if (!config['netease-bee']?.secret) fields.push('secret');
-      return fields;
-    }
     if (platform === 'qq') {
       const fields: string[] = [];
       if (!config.qq?.appId) fields.push('appId');
@@ -1637,14 +1317,6 @@ export class IMGatewayManager extends EventEmitter {
     if (platform === 'weixin') {
       // Weixin has no credentials; nothing to check
       return [];
-    }
-    if (platform === 'popo') {
-      const fields: string[] = [];
-      if (!config.popo?.appKey) fields.push('appKey');
-      if (!config.popo?.appSecret) fields.push('appSecret');
-      if ((config.popo?.connectionMode ?? 'websocket') === 'webhook' && !config.popo?.token) fields.push('token');
-      if (!config.popo?.aesKey) fields.push('aesKey');
-      return fields;
     }
     return config.discord.botToken ? [] : ['botToken'];
   }
@@ -1679,24 +1351,6 @@ export class IMGatewayManager extends EventEmitter {
       return t('imFeishuAuthPassedWithBot', { botName });
     }
 
-    if (platform === 'nim') {
-      const { appKey, account, token } = config.nim;
-      if (!appKey || !account || !token) {
-        throw new Error(t('imConfigIncomplete'));
-      }
-      return t('imNimConfigReady', { account });
-    }
-
-    if (platform === 'netease-bee') {
-      const nbConfig = config['netease-bee'];
-      const clientId = nbConfig?.clientId;
-      const secret = nbConfig?.secret;
-      if (!clientId || !secret) {
-        throw new Error(t('imConfigIncomplete'));
-      }
-      return t('imNeteaseBeeConfigReady', { clientId });
-    }
-
     if (platform === 'wecom') {
       const { botId, secret } = config.wecom;
       if (!botId || !secret) {
@@ -1709,15 +1363,6 @@ export class IMGatewayManager extends EventEmitter {
     if (platform === 'weixin') {
       // Weixin has no credentials to probe; just confirm enabled
       return t('imWeixinConfigReadyOpenClaw');
-    }
-
-    if (platform === 'popo') {
-      const { appKey, appSecret, token, aesKey, connectionMode } = config.popo;
-      const isWebhook = (connectionMode ?? 'websocket') === 'webhook';
-      if (!appKey || !appSecret || !aesKey || (isWebhook && !token)) {
-        throw new Error(t('imConfigIncomplete'));
-      }
-      return t('imPopoConfigReadyOpenClaw');
     }
 
     if (platform === 'qq') {
@@ -2186,12 +1831,9 @@ export class IMGatewayManager extends EventEmitter {
     }
     if (platform === 'dingtalk') return status.dingtalk.startedAt;
     if (platform === 'telegram') return status.telegram.startedAt;
-    if (platform === 'nim') return status.nim.startedAt;
-    if (platform === 'netease-bee') return status['netease-bee'].startedAt;
     if (platform === 'qq') return status.qq.startedAt;
     if (platform === 'wecom') return status.wecom.startedAt;
     if (platform === 'weixin') return status.weixin.startedAt;
-    if (platform === 'popo') return status.popo.startedAt;
     return status.discord.startedAt;
   }
 
@@ -2199,12 +1841,9 @@ export class IMGatewayManager extends EventEmitter {
     if (platform === 'dingtalk') return status.dingtalk.lastInboundAt;
     if (platform === 'feishu') return status.feishu.lastInboundAt;
     if (platform === 'telegram') return status.telegram.lastInboundAt;
-    if (platform === 'nim') return status.nim.lastInboundAt;
-    if (platform === 'netease-bee') return status['netease-bee'].lastInboundAt;
     if (platform === 'qq') return status.qq.lastInboundAt;
     if (platform === 'wecom') return status.wecom.lastInboundAt;
     if (platform === 'weixin') return status.weixin.lastInboundAt;
-    if (platform === 'popo') return status.popo.lastInboundAt;
     return status.discord.lastInboundAt;
   }
 
@@ -2212,12 +1851,9 @@ export class IMGatewayManager extends EventEmitter {
     if (platform === 'dingtalk') return status.dingtalk.lastOutboundAt;
     if (platform === 'feishu') return status.feishu.lastOutboundAt;
     if (platform === 'telegram') return status.telegram.lastOutboundAt;
-    if (platform === 'nim') return status.nim.lastOutboundAt;
-    if (platform === 'netease-bee') return status['netease-bee'].lastOutboundAt;
     if (platform === 'qq') return status.qq.lastOutboundAt;
     if (platform === 'wecom') return status.wecom.lastOutboundAt;
     if (platform === 'weixin') return status.weixin.lastOutboundAt;
-    if (platform === 'popo') return status.popo.lastOutboundAt;
     return status.discord.lastOutboundAt;
   }
 
@@ -2225,12 +1861,9 @@ export class IMGatewayManager extends EventEmitter {
     if (platform === 'dingtalk') return status.dingtalk.lastError;
     if (platform === 'feishu') return status.feishu.error;
     if (platform === 'telegram') return status.telegram.lastError;
-    if (platform === 'nim') return status.nim.lastError;
-    if (platform === 'netease-bee') return status['netease-bee'].lastError;
     if (platform === 'qq') return status.qq.lastError;
     if (platform === 'wecom') return status.wecom.lastError;
     if (platform === 'weixin') return status.weixin.lastError;
-    if (platform === 'popo') return status.popo.lastError;
     return status.discord.lastError;
   }
 

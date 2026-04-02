@@ -1807,7 +1807,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private async loadGatewayClientCtor(clientEntryPath: string): Promise<GatewayClientCtor> {
     // Use require() with file path directly. TypeScript's CJS output downgrades
     // dynamic import() to require(), which doesn't support file:// URLs.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const loaded = require(clientEntryPath) as Record<string, unknown>;
     const direct = loaded.GatewayClient;
     if (typeof direct === 'function') {
@@ -3003,7 +3002,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         && !isManagedSessionKey(sessionKey)
         && this.channelSessionSync.isChannelSessionKey(sessionKey);
       const isDiscord = sessionKey.includes(':discord:');
-      const isQQ = sessionKey.includes(':qqbot:');
+      const isQQ = sessionKey.includes(':qqbot:') || sessionKey.includes(':openclaw-qqbot:');
 
       // Extract authoritative user/assistant entries from gateway history
       const authoritativeEntries: Array<{ role: 'user' | 'assistant'; text: string }> = [];
@@ -3154,7 +3153,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         );
         if (isChannel) {
           const latestOnly = this.reCreatedChannelSessionIds.has(sessionId);
-          this.syncChannelUserMessages(sessionId, history.messages, latestOnly, turn.sessionKey.includes(':discord:'), turn.sessionKey.includes(':qqbot:'), turn.sessionKey.includes(':moltbot-popo:'));
+          this.syncChannelUserMessages(sessionId, history.messages, latestOnly, turn.sessionKey.includes(':discord:'), turn.sessionKey.includes(':qqbot:') || turn.sessionKey.includes(':openclaw-qqbot:'));
         }
 
         if (!this.isCurrentTurnToken(sessionId, turn.turnToken)) {
@@ -3260,7 +3259,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     historyMessages: unknown[],
     isDiscord: boolean,
     isQQ: boolean,
-    isPopo: boolean = false,
   ): ChannelHistorySyncEntry[] {
     const historyEntries: ChannelHistorySyncEntry[] = [];
     for (const message of historyMessages) {
@@ -3268,9 +3266,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       const role = typeof message.role === 'string' ? message.role.trim().toLowerCase() : '';
       if (role !== 'user' && role !== 'assistant') continue;
       let text = extractMessageText(message).trim();
-      // POPO's moltbot-popo plugin converts newlines to HTML break tags (<br />),
-      // causing raw <br /> to appear in the UI and AI conversation.
-      if (isPopo) text = text.replace(/<br\s*\/?>/gi, '\n');
       if (isDiscord) text = stripDiscordMentions(text);
       if (isQQ && role === 'user') text = stripQQBotSystemPrompt(text);
       if (text) {
@@ -3414,8 +3409,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    * because OpenClaw's `chat.history` window can slide due to byte limits well before
    * the requested message count is reached.
    */
-  private syncChannelUserMessages(sessionId: string, historyMessages: unknown[], latestOnly = false, isDiscord = false, isQQ = false, isPopo = false): void {
-    const historyEntries = this.collectChannelHistoryEntries(historyMessages, isDiscord, isQQ, isPopo);
+  private syncChannelUserMessages(sessionId: string, historyMessages: unknown[], latestOnly = false, isDiscord = false, isQQ = false): void {
+    const historyEntries = this.collectChannelHistoryEntries(historyMessages, isDiscord, isQQ);
 
     const cursor = this.channelSyncCursor.get(sessionId) ?? 0;
 
@@ -3771,7 +3766,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           this.markGatewayHistoryWindowConsumed(sessionId, history.messages);
           const latestOnly = this.reCreatedChannelSessionIds.has(sessionId);
           const beforeCount = this.getUserMessageCount(sessionId);
-                  this.syncChannelUserMessages(sessionId, history.messages, latestOnly, sessionKey.includes(':discord:'), sessionKey.includes(':qqbot:'), sessionKey.includes(':moltbot-popo:'));
+                  this.syncChannelUserMessages(sessionId, history.messages, latestOnly, sessionKey.includes(':discord:'), sessionKey.includes(':qqbot:') || sessionKey.includes(':openclaw-qqbot:'));
           const afterCount = this.getUserMessageCount(sessionId);
           const newUserMessages = afterCount - beforeCount;
           console.log('[Debug:prefetch] synced user messages:', newUserMessages, '(before:', beforeCount, 'after:', afterCount, ')');

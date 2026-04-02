@@ -12,10 +12,7 @@ import type {
   TelegramOpenClawConfig,
   QQOpenClawConfig,
   DiscordOpenClawConfig,
-  NimConfig,
-  NeteaseBeeChanConfig,
   WecomOpenClawConfig,
-  PopoOpenClawConfig,
   WeixinOpenClawConfig,
   IMSettings,
 } from '../../types/im';
@@ -63,17 +60,8 @@ const imSlice = createSlice({
     setDiscordConfig: (state, action: PayloadAction<Partial<DiscordOpenClawConfig>>) => {
       state.config.discord = { ...state.config.discord, ...action.payload };
     },
-    setNimConfig: (state, action: PayloadAction<Partial<NimConfig>>) => {
-      state.config.nim = { ...state.config.nim, ...action.payload };
-    },
-    setNeteaseBeeChanConfig: (state, action: PayloadAction<Partial<NeteaseBeeChanConfig>>) => {
-      state.config['netease-bee'] = { ...state.config['netease-bee'], ...action.payload };
-    },
     setWecomConfig: (state, action: PayloadAction<Partial<WecomOpenClawConfig>>) => {
       state.config.wecom = { ...state.config.wecom, ...action.payload };
-    },
-    setPopoConfig: (state, action: PayloadAction<Partial<PopoOpenClawConfig>>) => {
-      state.config.popo = { ...state.config.popo, ...action.payload };
     },
     setWeixinConfig: (state, action: PayloadAction<Partial<WeixinOpenClawConfig>>) => {
       state.config.weixin = { ...state.config.weixin, ...action.payload };
@@ -103,10 +91,7 @@ export const {
   setTelegramOpenClawConfig,
   setQQConfig,
   setDiscordConfig,
-  setNimConfig,
-  setNeteaseBeeChanConfig,
   setWecomConfig,
-  setPopoConfig,
   setWeixinConfig,
   setIMSettings,
   setStatus,

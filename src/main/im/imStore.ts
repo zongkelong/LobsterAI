@@ -12,10 +12,7 @@ import {
   TelegramOpenClawConfig,
   QQConfig,
   DiscordOpenClawConfig,
-  NimConfig,
-  NeteaseBeeChanConfig,
   WecomOpenClawConfig,
-  PopoOpenClawConfig,
   WeixinOpenClawConfig,
   IMSettings,
   Platform,
@@ -25,10 +22,7 @@ import {
   DEFAULT_TELEGRAM_OPENCLAW_CONFIG,
   DEFAULT_QQ_CONFIG,
   DEFAULT_DISCORD_OPENCLAW_CONFIG,
-  DEFAULT_NIM_CONFIG,
-  DEFAULT_NETEASE_BEE_CONFIG,
   DEFAULT_WECOM_CONFIG,
-  DEFAULT_POPO_CONFIG,
   DEFAULT_WEIXIN_CONFIG,
   DEFAULT_IM_SETTINGS,
 } from './types';
@@ -298,47 +292,6 @@ export class IMStore {
       }
     }
 
-    // Migrate popo configs that have token but no connectionMode:
-    // These are existing webhook users from before connectionMode was introduced.
-    // Preserve their setup by explicitly setting connectionMode to 'webhook'.
-    const popoResult = this.db.exec('SELECT value FROM im_config WHERE key = ?', ['popo']);
-    if (popoResult[0]?.values[0]) {
-      try {
-        const popoConfig = JSON.parse(popoResult[0].values[0][0] as string) as Partial<PopoOpenClawConfig>;
-        if (popoConfig.token && !popoConfig.connectionMode) {
-          popoConfig.connectionMode = 'webhook';
-          const now = Date.now();
-          this.db.run(
-            'UPDATE im_config SET value = ?, updated_at = ? WHERE key = ?',
-            [JSON.stringify(popoConfig), now, 'popo']
-          );
-          changed = true;
-          console.log('[IMStore] Migrated popo config: inferred connectionMode=webhook from existing token');
-        }
-      } catch {
-        // Ignore parse errors
-      }
-    }
-
-    // Migrate 'xiaomifeng' config key to 'netease-bee'
-    const oldXmfResult = this.db.exec('SELECT value FROM im_config WHERE key = ?', ['xiaomifeng']);
-    const newBeeResult = this.db.exec('SELECT value FROM im_config WHERE key = ?', ['netease-bee']);
-    if (oldXmfResult[0]?.values[0] && !newBeeResult[0]?.values[0]) {
-      try {
-        const oldConfig = JSON.parse(oldXmfResult[0].values[0][0] as string) as Partial<NeteaseBeeChanConfig>;
-        const now = Date.now();
-        this.db.run(
-          'INSERT INTO im_config (key, value, updated_at) VALUES (?, ?, ?)',
-          ['netease-bee', JSON.stringify({ ...DEFAULT_NETEASE_BEE_CONFIG, ...oldConfig }), now]
-        );
-        this.db.run('DELETE FROM im_config WHERE key = ?', ['xiaomifeng']);
-        changed = true;
-        console.log('[IMStore] Migrated xiaomifeng config to netease-bee');
-      } catch {
-        // Ignore parse errors
-      }
-    }
-
     if (changed) {
       this.saveDb();
     }
@@ -375,11 +328,8 @@ export class IMStore {
     const feishu = this.getConfigValue<FeishuOpenClawConfig>('feishuOpenClaw') ?? DEFAULT_FEISHU_OPENCLAW_CONFIG;
     const telegram = this.getConfigValue<TelegramOpenClawConfig>('telegramOpenClaw') ?? DEFAULT_TELEGRAM_OPENCLAW_CONFIG;
     const discord = this.getConfigValue<DiscordOpenClawConfig>('discordOpenClaw') ?? DEFAULT_DISCORD_OPENCLAW_CONFIG;
-    const nimConfig = this.getConfigValue<NimConfig>('nim') ?? DEFAULT_NIM_CONFIG;
-    const neteaseBeeChan = this.getConfigValue<NeteaseBeeChanConfig>('netease-bee') ?? DEFAULT_NETEASE_BEE_CONFIG;
     const qq = this.getConfigValue<QQConfig>('qq') ?? DEFAULT_QQ_CONFIG;
     const wecom = this.getConfigValue<WecomOpenClawConfig>('wecomOpenClaw') ?? DEFAULT_WECOM_CONFIG;
-    const popo = this.getConfigValue<PopoOpenClawConfig>('popo') ?? DEFAULT_POPO_CONFIG;
     const weixin = this.getConfigValue<WeixinOpenClawConfig>('weixin') ?? DEFAULT_WEIXIN_CONFIG;
     const settings = this.getConfigValue<IMSettings>('settings') ?? DEFAULT_IM_SETTINGS;
 
@@ -399,11 +349,8 @@ export class IMStore {
       feishu: resolveEnabled(feishu, DEFAULT_FEISHU_OPENCLAW_CONFIG),
       telegram: resolveEnabled(telegram, DEFAULT_TELEGRAM_OPENCLAW_CONFIG),
       discord: resolveEnabled(discord, DEFAULT_DISCORD_OPENCLAW_CONFIG),
-      nim: resolveEnabled(nimConfig, DEFAULT_NIM_CONFIG),
-      'netease-bee': resolveEnabled(neteaseBeeChan, DEFAULT_NETEASE_BEE_CONFIG),
       qq: resolveEnabled(qq, DEFAULT_QQ_CONFIG),
       wecom: resolveEnabled(wecom, DEFAULT_WECOM_CONFIG),
-      popo: resolveEnabled(popo, DEFAULT_POPO_CONFIG),
       weixin: resolveEnabled(weixin, DEFAULT_WEIXIN_CONFIG),
       settings: { ...DEFAULT_IM_SETTINGS, ...settings },
     };
@@ -422,20 +369,11 @@ export class IMStore {
     if (config.discord) {
       this.setDiscordOpenClawConfig(config.discord);
     }
-    if (config.nim) {
-      this.setNimConfig(config.nim);
-    }
-    if (config['netease-bee']) {
-      this.setNeteaseBeeChanConfig(config['netease-bee']);
-    }
     if (config.qq) {
       this.setQQConfig(config.qq);
     }
     if (config.wecom) {
       this.setWecomConfig(config.wecom);
-    }
-    if (config.popo) {
-      this.setPopoConfig(config.popo);
     }
     if (config.weixin) {
       this.setWeixinConfig(config.weixin);
@@ -481,30 +419,6 @@ export class IMStore {
     this.setConfigValue('discordOpenClaw', { ...current, ...config });
   }
 
-  // ==================== NIM Config ====================
-
-  getNimConfig(): NimConfig {
-    const stored = this.getConfigValue<NimConfig>('nim');
-    return { ...DEFAULT_NIM_CONFIG, ...stored };
-  }
-
-  setNimConfig(config: Partial<NimConfig>): void {
-    const current = this.getNimConfig();
-    this.setConfigValue('nim', { ...current, ...config });
-  }
-
-  // ==================== NeteaseBee Chan Config ====================
-
-  getNeteaseBeeChanConfig(): NeteaseBeeChanConfig {
-    const stored = this.getConfigValue<NeteaseBeeChanConfig>('netease-bee');
-    return { ...DEFAULT_NETEASE_BEE_CONFIG, ...stored };
-  }
-
-  setNeteaseBeeChanConfig(config: Partial<NeteaseBeeChanConfig>): void {
-    const current = this.getNeteaseBeeChanConfig();
-    this.setConfigValue('netease-bee', { ...current, ...config });
-  }
-
   // ==================== Telegram OpenClaw Config ====================
 
   getTelegramOpenClawConfig(): TelegramOpenClawConfig {
@@ -539,18 +453,6 @@ export class IMStore {
   setWecomConfig(config: Partial<WecomOpenClawConfig>): void {
     const current = this.getWecomConfig();
     this.setConfigValue('wecomOpenClaw', { ...current, ...config });
-  }
-
-  // ==================== POPO ====================
-
-  getPopoConfig(): PopoOpenClawConfig {
-    const stored = this.getConfigValue<PopoOpenClawConfig>('popo');
-    return { ...DEFAULT_POPO_CONFIG, ...stored };
-  }
-
-  setPopoConfig(config: Partial<PopoOpenClawConfig>): void {
-    const current = this.getPopoConfig();
-    this.setConfigValue('popo', { ...current, ...config });
   }
 
   // ==================== Weixin (微信) ====================
@@ -596,11 +498,9 @@ export class IMStore {
     const hasFeishu = !!(config.feishu.appId && config.feishu.appSecret);
     const hasTelegram = !!config.telegram.botToken;
     const hasDiscord = !!config.discord.botToken;
-    const hasNim = !!(config.nim.appKey && config.nim.account && config.nim.token);
-    const hasNeteaseBeeChan = !!(config['netease-bee']?.clientId && config['netease-bee']?.secret);
     const hasQQ = !!(config.qq?.appId && config.qq?.appSecret);
     const hasWecom = !!(config.wecom?.botId && config.wecom?.secret);
-    return hasDingTalk || hasFeishu || hasTelegram || hasDiscord || hasNim || hasNeteaseBeeChan || hasQQ || hasWecom;
+    return hasDingTalk || hasFeishu || hasTelegram || hasDiscord || hasQQ || hasWecom;
   }
 
   // ==================== Notification Target Persistence ====================

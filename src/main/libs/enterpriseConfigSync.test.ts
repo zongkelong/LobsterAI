@@ -59,18 +59,16 @@ describe('enterpriseConfigSync', () => {
     expect(map['all']).toBe('sandbox');
   });
 
-  test('channel key mapping covers all 10 platforms', () => {
+  test('channel key mapping covers all 7 platforms', () => {
     const map: Record<string, string> = {
       telegram: 'telegramOpenClaw', discord: 'discordOpenClaw',
       feishu: 'feishuOpenClaw', 'dingtalk-connector': 'dingtalkOpenClaw',
-      qqbot: 'qq', wecom: 'wecomOpenClaw', 'moltbot-popo': 'popo',
-      nim: 'nim', 'openclaw-weixin': 'weixin', xiaomifeng: 'xiaomifeng',
+      qqbot: 'qq', wecom: 'wecomOpenClaw', 'openclaw-weixin': 'weixin',
     };
-    expect(Object.keys(map)).toHaveLength(10);
+    expect(Object.keys(map)).toHaveLength(7);
     expect(map['telegram']).toBe('telegramOpenClaw');
     expect(map['dingtalk-connector']).toBe('dingtalkOpenClaw');
-    expect(map['qqbot']).toBe('qq');
-    expect(map['moltbot-popo']).toBe('popo');
+    expect(map['openclaw-qqbot']).toBe('qq');
     expect(map['openclaw-weixin']).toBe('weixin');
   });
 

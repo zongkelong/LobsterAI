@@ -170,18 +170,16 @@ function extractCronJobId(sessionKey: string): string {
 function getChannelTitlePrefix(platform: string): string {
   const i18nMap: Record<string, string> = {
     feishu: t('channelPrefixFeishu'),
+    'openclaw-lark': t('channelPrefixFeishu'),
     dingtalk: t('channelPrefixDingtalk'),
     wecom: t('channelPrefixWecom'),
     'wecom-openclaw-plugin': t('channelPrefixWecom'),
-    nim: t('channelPrefixNim'),
     weixin: t('channelPrefixWeixin'),
-    'netease-bee': t('channelPrefixNeteaseBee'),
   };
   const staticMap: Record<string, string> = {
     telegram: 'TG',
     discord: 'Discord',
     qq: 'QQ',
-    popo: 'POPO',
   };
   const label = i18nMap[platform] ?? staticMap[platform] ?? platform;
   return `[${label}]`;

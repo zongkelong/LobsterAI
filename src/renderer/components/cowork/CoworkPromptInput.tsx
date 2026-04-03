@@ -5,7 +5,6 @@ import { PhotoIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import PaperClipIcon from '../icons/PaperClipIcon';
 import XMarkIcon from '../icons/XMarkIcon';
 import ModelSelector from '../ModelSelector';
-import Tooltip from '../ui/Tooltip';
 import FolderSelectorPopover from './FolderSelectorPopover';
 import { SkillsButton, ActiveSkillBadge } from '../skills';
 import { i18nService } from '../../services/i18n';

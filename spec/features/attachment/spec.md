@@ -90,8 +90,8 @@ Vision 支持取决于模型配置中的 `supportsImage` 字段。
 | 入口 | 触发方式 | 说明 |
 |------|---------|------|
 | 文件选择器 | `handleAddFile` → `dialog.selectFiles` IPC | 系统文件对话框，返回 `nativePath[]` |
-| 拖拽 | `handleDrop` → `handleIncomingFiles` | `dataTransfer.files` |
-| 粘贴 | `handlePaste` → `handleIncomingFiles` | `clipboardData.files` |
+| 拖拽 | `handleDrop` → `handleIncomingFiles` | `dataTransfer.files`。从 OS 文件管理器拖入的文件有 `nativePath`；从网页内容拖入的文件无 `nativePath` |
+| 粘贴 | `handlePaste` → `handleIncomingFiles` | `clipboardData.files`。从 OS 复制的文件有 `nativePath`；截图/网页复制的图片无 `nativePath` |
 
 ### 处理路径分类
 
@@ -129,8 +129,8 @@ Vision 支持取决于模型配置中的 `supportsImage` 字段。
 | A | 文件选择器上传非图片 | ✅ | ❌ | `addAttachment(nativePath)` | ✅ 原文件 | ✅ | — |
 | B | 从 Finder 粘贴文件 | ✅ | ❌ | `addAttachment(nativePath)` | ✅ 原文件 | ✅ | — |
 | C | 从 Finder 粘贴图片文件 | ✅ | ✅ | `addAttachment(nativePath, {isImage, dataUrl})` | ✅ 原文件 | ✅ | ✅ |
-| D | 从浏览器拖入非图片文件 | ❌ | ❌ | `saveInlineFile()` → `addAttachment(savedPath)` | ✅ 写入磁盘 | ✅ | — |
-| E | 截图粘贴 / 从网页复制图片 | ❌ | ✅ | `saveInlineFile()` → `addAttachment(savedPath, {isImage, dataUrl})` | ✅ 写入磁盘 | ✅ | ✅ |
+| D | 从网页拖入非图片文件（无 nativePath） | ❌ | ❌ | `saveInlineFile()` → `addAttachment(savedPath)` | ✅ 写入磁盘 | ✅ | — |
+| E | 截图粘贴 / 从网页复制图片（无 nativePath） | ❌ | ✅ | `saveInlineFile()` → `addAttachment(savedPath, {isImage, dataUrl})` | ✅ 写入磁盘 | ✅ | ✅ |
 
 > 路径 E 在 [001-clipboard-image-persistence](001-clipboard-image-persistence/spec.md) 中从"仅内存"修改为"写入磁盘"。
 

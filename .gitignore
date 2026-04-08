@@ -7,7 +7,7 @@ node_modules
 dist
 dist-electron
 .DS_Store
-.env 
+.env
 .claude/
 __pycache__/
 .codebuddy/
@@ -51,3 +51,4 @@ sandbox/
 **/**/post-commit
 openspec/
 .superpowers/
+.worktrees/
